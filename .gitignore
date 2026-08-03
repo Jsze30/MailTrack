@@ -1,0 +1,5 @@
+.env.local
+.claude
+PLAN.md
+UI_PLAN.md
+extension-key.pem

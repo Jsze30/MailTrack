@@ -1,0 +1,132 @@
+/* Passive MailTrack status indicators. */
+
+.mt-status-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
+  margin: 0 8px 0 0 !important;
+  padding: 1px 7px !important;
+  border: 0 !important;
+  border-radius: 10px !important;
+  font: 600 11px/16px "Google Sans", Roboto, Arial, sans-serif !important;
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.mt-status-badge.mt-opened {
+  color: #188038 !important;
+  background: rgba(24, 128, 56, 0.12) !important;
+}
+
+.mt-status-badge.mt-unopened {
+  color: #5f6368 !important;
+  background: rgba(95, 99, 104, 0.12) !important;
+}
+
+.mt-status-badge.mt-scheduled {
+  color: #185abc !important;
+  background: rgba(26, 115, 232, 0.12) !important;
+}
+
+.mt-thread-status-anchor {
+  position: relative !important;
+}
+
+.mt-thread-status {
+  position: absolute !important;
+  top: 50% !important;
+  right: calc(100% + 8px) !important;
+  transform: translateY(-50%) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
+  height: 22px !important;
+  margin: 0 !important;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: 11px !important;
+  color: #5f6368 !important;
+  background: rgba(95, 99, 104, 0.12) !important;
+  font: 600 12px/22px "Google Sans", Roboto, Arial, sans-serif !important;
+  white-space: nowrap !important;
+  appearance: none !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+}
+
+.mt-thread-status.mt-opened {
+  color: #188038 !important;
+  background: rgba(24, 128, 56, 0.12) !important;
+}
+
+.mt-thread-status.mt-scheduled {
+  color: #185abc !important;
+  background: rgba(26, 115, 232, 0.12) !important;
+  cursor: default !important;
+  pointer-events: none !important;
+}
+
+.mt-thread-status:focus-visible {
+  outline: 2px solid #1a73e8 !important;
+  outline-offset: 2px !important;
+}
+
+.mt-history-card {
+  position: absolute !important;
+  top: calc(100% + 8px) !important;
+  right: calc(100% + 8px) !important;
+  z-index: 1000 !important;
+  box-sizing: border-box !important;
+  width: max-content !important;
+  min-width: 260px !important;
+  max-width: 340px !important;
+  padding: 14px !important;
+  border: 1px solid #dadce0 !important;
+  border-radius: 12px !important;
+  color: #202124 !important;
+  background: #fff !important;
+  box-shadow: 0 4px 16px rgba(60, 64, 67, 0.24) !important;
+  font: 400 13px/18px "Google Sans", Roboto, Arial, sans-serif !important;
+  text-align: left !important;
+  white-space: normal !important;
+}
+
+.mt-history-card[hidden] {
+  display: none !important;
+}
+
+.mt-history-title {
+  margin-bottom: 10px !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+}
+
+.mt-history-empty {
+  color: #5f6368 !important;
+}
+
+.mt-history-list {
+  max-height: 240px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow-y: auto !important;
+}
+
+.mt-history-row {
+  padding: 9px 0 !important;
+}
+
+.mt-history-row:first-child {
+  padding-top: 0 !important;
+}
+
+.mt-history-row:last-child {
+  padding-bottom: 0 !important;
+}
+
+.mt-history-row + .mt-history-row {
+  border-top: 1px solid #e8eaed !important;
+}

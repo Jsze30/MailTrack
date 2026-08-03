@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>MailTrack</h1>
+      <span id="version"></span>
+    </header>
+
+    <label class="field">
+      Backend URL
+      <input id="baseUrl" type="url" placeholder="https://your-app.vercel.app" />
+    </label>
+
+    <label class="field">
+      Shared secret
+      <input id="secret" type="password" placeholder="TRACK_SECRET value" />
+    </label>
+
+    <label class="tracking-setting">
+      <input id="trackDefault" type="checkbox" />
+      Embed a tracking pixel in new emails
+    </label>
+
+    <button id="save" class="primary">Save settings</button>
+    <p id="settings-status" class="status"></p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
