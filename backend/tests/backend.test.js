@@ -153,6 +153,37 @@ test("a delayed Gmail image load inside the Sent-view interval is excluded", () 
   assert.deepEqual(status.openHistory, []);
 });
 
+test("a Gmail proxy load racing before a Sent view is excluded with later sender loads", () => {
+  const createdAt = Date.now() - 120_000;
+  const viewedAt = createdAt + 60_000;
+  const proxyUserAgent =
+    "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 " +
+    "(via ggpht.com GoogleImageProxy)";
+  const status = statusFor({
+    id: "track-proxy-race",
+    sent_at: new Date(createdAt).toISOString(),
+    gmail_thread_id: null,
+    events: [
+      {
+        type: "open",
+        ts: new Date(viewedAt - 1_500).toISOString(),
+        user_agent: proxyUserAgent,
+      },
+      { type: "selfview_start", ts: new Date(viewedAt).toISOString() },
+      {
+        type: "open",
+        ts: new Date(viewedAt + 500).toISOString(),
+        user_agent: proxyUserAgent,
+      },
+      { type: "selfview_end", ts: new Date(viewedAt + 5_000).toISOString() },
+    ],
+  });
+
+  assert.equal(status.opened, false);
+  assert.equal(status.openCount, 0);
+  assert.deepEqual(status.openHistory, []);
+});
+
 test("a recipient open after a completed self-view interval still counts", () => {
   const createdAt = Date.now() - 120_000;
   const viewedAt = createdAt + 60_000;

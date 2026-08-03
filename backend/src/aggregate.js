@@ -67,6 +67,16 @@ export function recipientOpenSessions(track) {
       selfViewOpenIndexes.add(openIndex);
       matched = true;
     }
+    let precedingProxy = opens.length - 1;
+    while (precedingProxy >= 0 && opens[precedingProxy] > startedAt) precedingProxy -= 1;
+    if (
+      precedingProxy >= 0 &&
+      !selfViewOpenIndexes.has(precedingProxy) &&
+      gmailProxyOpens.has(opens[precedingProxy]) &&
+      startedAt - opens[precedingProxy] <= SELF_VIEW_LOOKBACK_MS
+    ) {
+      selfViewOpenIndexes.add(precedingProxy);
+    }
     if (!matched) {
       let candidate = opens.length - 1;
       while (candidate >= 0 && opens[candidate] > startedAt) candidate -= 1;
