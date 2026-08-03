@@ -42,12 +42,15 @@ export async function init() {
       subject           TEXT,
       recipients        TEXT,
       sent_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+      sent_at_confirmed BOOLEAN NOT NULL DEFAULT false,
       scheduled         BOOLEAN NOT NULL DEFAULT false,
       gmail_thread_id   TEXT,
       gmail_message_id  TEXT
     );
     ALTER TABLE emails ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT;
     ALTER TABLE emails ADD COLUMN IF NOT EXISTS gmail_message_id TEXT;
+    ALTER TABLE emails ADD COLUMN IF NOT EXISTS sent_at_confirmed BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE emails ALTER COLUMN sent_at_confirmed SET DEFAULT false;
     CREATE TABLE IF NOT EXISTS events (
       id          BIGSERIAL PRIMARY KEY,
       email_id    TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
@@ -64,8 +67,8 @@ export async function init() {
 export async function createTrack(id) {
   if (usePostgres) {
     await pg.query(
-      `INSERT INTO emails (id, subject, recipients, scheduled)
-       VALUES ($1, '', '', false)
+      `INSERT INTO emails (id, subject, recipients, scheduled, sent_at_confirmed)
+       VALUES ($1, '', '', false, false)
        ON CONFLICT (id) DO NOTHING`,
       [id]
     );
@@ -79,6 +82,7 @@ export async function createTrack(id) {
       subject: "",
       recipients: "",
       sent_at: new Date().toISOString(),
+      sent_at_confirmed: false,
       scheduled: false,
       gmail_thread_id: null,
       gmail_message_id: null,
@@ -105,7 +109,11 @@ export async function mapGmailThread(
       `UPDATE emails
        SET gmail_thread_id = $2,
            gmail_message_id = $3,
-           sent_at = COALESCE($4::timestamptz, sent_at),
+           sent_at = CASE
+             WHEN NOT sent_at_confirmed AND $4::timestamptz IS NOT NULL THEN $4::timestamptz
+             ELSE sent_at
+           END,
+           sent_at_confirmed = sent_at_confirmed OR $4::timestamptz IS NOT NULL,
            scheduled = COALESCE($5::boolean, scheduled)
        WHERE id = $1`,
       [id, threadId, messageId || null, sentAt, scheduled]
@@ -116,9 +124,14 @@ export async function mapGmailThread(
   const database = readJson();
   const track = database.emails.find((item) => item.id === id);
   if (!track) return null;
+  const sentAtConfirmed =
+    typeof track.sent_at_confirmed === "boolean"
+      ? track.sent_at_confirmed
+      : Boolean(track.gmail_thread_id);
   track.gmail_thread_id = threadId;
   track.gmail_message_id = messageId || null;
-  if (sentAt) track.sent_at = sentAt;
+  if (sentAt && !sentAtConfirmed) track.sent_at = sentAt;
+  track.sent_at_confirmed = sentAtConfirmed || Boolean(sentAt);
   if (typeof scheduled === "boolean") track.scheduled = scheduled;
   writeJson(database);
   return track;

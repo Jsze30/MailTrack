@@ -9,8 +9,7 @@
   const PIXEL_MARKER = "data-mailtrack-pixel";
   const BODY_MARKER = "data-mailtrack-id";
   const preparedComposes = new WeakSet();
-  const sendingComposes = new WeakSet();
-  const schedulingComposes = new WeakSet();
+  const deliveringComposes = new WeakSet();
 
   function synchronizeGmailDraft(body) {
     body.dispatchEvent(
@@ -92,21 +91,25 @@
     if (compose) prepareCompose(compose);
   }
 
-  async function handleSend(target, sendButton) {
-    const compose = composeFromTarget(target, sendButton);
+  async function handleDelivery(target, actionButton, { originButton = null, scheduled = false } = {}) {
+    const composeTarget = originButton?.isConnected ? originButton : target;
+    const composeButton = originButton?.isConnected ? originButton : actionButton;
+    const compose = composeFromTarget(composeTarget, composeButton);
     if (!compose) {
-      window.MTGate.resume(sendButton);
+      window.MTGate.resume(actionButton);
       return;
     }
-    if (sendingComposes.has(compose.root)) return;
-    sendingComposes.add(compose.root);
+    if (deliveringComposes.has(compose.root)) return;
+    deliveringComposes.add(compose.root);
     try {
       await window.MT.ready;
       prepareCompose(compose);
       const id = compose.body.getAttribute(BODY_MARKER);
       if (!id) return;
       const sentAt = new Date().toISOString();
-      const pendingSave = window.MT.pendingTracks.add({ id, sentAt }).catch(() => {});
+      const pendingSave = window.MT.pendingTracks
+        .add({ id, sentAt, scheduled })
+        .catch(() => {});
       const registration = window.MT.api.registerTrack(id).catch(() => {});
       ensurePixel(compose.body, id, window.MT.getConfig().baseUrl);
       await Promise.all([pendingSave, registration, synchronizeGmailDraft(compose.body)]);
@@ -115,13 +118,13 @@
           detail: JSON.stringify({
             trackingId: id,
             pixelUrl: `${window.MT.getConfig().baseUrl}/o/${id}.gif`,
-            scheduled: false,
+            scheduled,
           }),
         })
       );
     } finally {
-      sendingComposes.delete(compose.root);
-      window.MTGate.resume(sendButton);
+      deliveringComposes.delete(compose.root);
+      window.MTGate.resume(actionButton);
     }
   }
 
@@ -134,50 +137,17 @@
   );
 
   window.MTGate.onSend((target, sendButton) => {
-    handleSend(target, sendButton).catch((error) => {
+    handleDelivery(target, sendButton).catch((error) => {
       console.warn("[MailTrack] send preparation failed", error);
     });
   });
 
-  async function handleSchedule(target, scheduleButton, originButton) {
-    const composeTarget = originButton?.isConnected ? originButton : target;
-    const composeButton = originButton?.isConnected ? originButton : scheduleButton;
-    const compose = composeFromTarget(composeTarget, composeButton);
-    if (!compose) {
-      window.MTGate.resume(scheduleButton);
-      return;
-    }
-    if (schedulingComposes.has(compose.root)) return;
-    schedulingComposes.add(compose.root);
-    try {
-      await window.MT.ready;
-      prepareCompose(compose);
-      const id = compose.body.getAttribute(BODY_MARKER);
-      if (!id) return;
-      const sentAt = new Date().toISOString();
-      const pendingSave = window.MT.pendingTracks.add({ id, sentAt, scheduled: true }).catch(() => {});
-      const registration = window.MT.api.registerTrack(id).catch(() => {});
-      ensurePixel(compose.body, id, window.MT.getConfig().baseUrl);
-      await Promise.all([pendingSave, registration, synchronizeGmailDraft(compose.body)]);
-      window.dispatchEvent(
-        new CustomEvent("mailtrack:prepare-send", {
-          detail: JSON.stringify({
-            trackingId: id,
-            pixelUrl: `${window.MT.getConfig().baseUrl}/o/${id}.gif`,
-            scheduled: true,
-          }),
-        })
-      );
-    } finally {
-      schedulingComposes.delete(compose.root);
-      window.MTGate.resume(scheduleButton);
-    }
-  }
-
   window.MTGate.onSchedule((target, scheduleButton, originButton) => {
-    handleSchedule(target, scheduleButton, originButton).catch((error) => {
-      console.warn("[MailTrack] schedule preparation failed", error);
-    });
+    handleDelivery(target, scheduleButton, { originButton, scheduled: true }).catch(
+      (error) => {
+        console.warn("[MailTrack] schedule preparation failed", error);
+      }
+    );
   });
 
   async function mapExactTrack(trackingId, threadId, messageId, scheduled = false) {

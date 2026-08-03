@@ -86,10 +86,10 @@
     try {
       parsed = JSON.parse(response);
     } catch {
-      return;
+      return false;
     }
     const mapping = findMapping(parsed);
-    if (!mapping) return;
+    if (!mapping) return false;
     for (const trackingId of trackingIds) {
       window.dispatchEvent(
         new CustomEvent("mailtrack:gmail-send", {
@@ -101,6 +101,7 @@
         })
       );
     }
+    return true;
   }
 
   const originalOpen = XMLHttpRequest.prototype.open;
@@ -114,16 +115,25 @@
   XMLHttpRequest.prototype.send = function (body) {
     const metadata = requestMetadata.get(this);
     if (metadata?.isSend) {
-      const scheduled = pendingPixel?.scheduled;
-      const outgoingBody = injectPixel(body, pendingPixel);
-      metadata.trackingIds = trackingIdsFrom(outgoingBody);
+      const preparedPixel = pendingPixel;
+      const scheduled = preparedPixel?.scheduled;
+      const outgoingBody = injectPixel(body, preparedPixel);
+      const outgoingTrackingIds = trackingIdsFrom(outgoingBody);
+      metadata.trackingIds =
+        preparedPixel?.trackingId && outgoingTrackingIds.includes(preparedPixel.trackingId)
+          ? [preparedPixel.trackingId]
+          : [];
       if (metadata.trackingIds.length) {
-        pendingPixel = null;
         this.addEventListener(
           "load",
           () => {
-            if (this.status >= 200 && this.status < 300) {
-              publish(metadata.trackingIds, this.responseText || this.response, scheduled);
+            if (
+              this.status >= 200 &&
+              this.status < 300 &&
+              pendingPixel?.trackingId === preparedPixel.trackingId &&
+              publish(metadata.trackingIds, this.responseText || this.response, scheduled)
+            ) {
+              pendingPixel = null;
             }
           },
           { once: true }

@@ -55,7 +55,7 @@ async function createWindow({
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: "2.0.25" }),
+      getManifest: () => ({ version: "2.0.27" }),
       sendMessage(message, callback) {
         callback(runtimeHandler ? runtimeHandler(message) : { ok: false, error: "not connected" });
       },
@@ -333,6 +333,7 @@ test("Schedule send is blocked until the compose is prepared exactly like Send",
   assert.match(serializedBody, /\/o\/[A-Za-z0-9_-]+\.gif/);
   assert.equal(body.querySelectorAll("img[data-mailtrack-pixel]").length, 1);
   assert.match(preparedSend?.pixelUrl || "", /\/o\/[A-Za-z0-9_-]+\.gif$/);
+  assert.equal(preparedSend?.scheduled, true);
   assert.equal(
     requests.filter(
       (request) => request.url.endsWith("/api/emails") && request.options.method === "POST"
@@ -393,9 +394,11 @@ test("Sent rows receive passive status indicators", async () => {
     html: `<!doctype html><body>
       <table><tbody id="sent-list">
         <tr class="zA" data-legacy-thread-id="19fc000000000123">
+          <td class="WA">important</td>
           <td class="yX"><span class="yW">recipient</span></td>
         </tr>
         <tr class="zA" data-legacy-thread-id="19fc000000000456">
+          <td class="WA">important</td>
           <td class="yX"><span class="yW">recipient</span></td>
         </tr>
       </tbody></table>
@@ -408,23 +411,54 @@ test("Sent rows receive passive status indicators", async () => {
     },
   });
 
+  const nativeBounds = window.Element.prototype.getBoundingClientRect;
+  window.Element.prototype.getBoundingClientRect = function () {
+    if (this.matches?.(".mt-status-badge")) {
+      return { ...nativeBounds.call(this), right: this.classList.contains("mt-opened") ? 252 : 236 };
+    }
+    if (this.matches?.("td.yX")) {
+      return { ...nativeBounds.call(this), left: 200 };
+    }
+    return nativeBounds.call(this);
+  };
+
   window.eval(await source("src/mt-ui.js"));
   await tick(window);
 
   const badges = window.document.querySelectorAll(".mt-status-badge");
   assert.equal(badges.length, 2);
-  assert.equal(badges[0].textContent, "Opened 2x");
-  assert.equal(badges[1].textContent, "Not opened");
+  assert.equal(badges[0].dataset.mtStatusLabel, "Opened 2 times");
+  assert.equal(badges[0].textContent, "2x");
+  assert.equal(badges[1].dataset.mtStatusLabel, "Not opened");
+  assert.equal(badges[1].textContent, "");
+  assert.equal(badges[0].querySelector(".mt-status-icon") != null, true);
+  assert.equal(badges[1].querySelector(".mt-status-icon") != null, true);
+  assert.equal(badges[0].parentElement, badges[0].closest("tr").querySelector("td.WA"));
+  assert.equal(badges[0].classList.contains("mt-after-importance"), true);
+  assert.equal(
+    Number.parseFloat(
+      badges[0].closest("tr").querySelector(".mt-status-spacer")?.style.width
+    ) >= 50,
+    true
+  );
+  assert.equal(
+    Number.parseFloat(
+      badges[1].closest("tr").querySelector(".mt-status-spacer")?.style.width
+    ) >= 35,
+    true
+  );
   assert.equal(badges[0].getAttribute("aria-hidden"), "true");
   assert.equal(badges[0].onclick, null);
 
   const newRow = window.document.createElement("tr");
   newRow.className = "zA";
   newRow.setAttribute("data-legacy-thread-id", "19fc000000000456");
-  newRow.innerHTML = '<td class="yX"><span class="yW">recipient</span></td>';
+  newRow.innerHTML =
+    '<td class="WA">important</td><td class="yX"><span class="yW">recipient</span></td>';
   window.document.querySelector("#sent-list").appendChild(newRow);
-  await Promise.resolve();
-  assert.equal(newRow.querySelector(".mt-status-badge")?.textContent, "Not opened");
+  await tick(window);
+  assert.equal(newRow.querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Not opened");
+  assert.equal(newRow.querySelector(".mt-status-badge")?.parentElement, newRow.querySelector("td.WA"));
 
   dom.window.close();
 });
@@ -446,9 +480,11 @@ test("Scheduled rows identify messages whose tracking pixel is registered", asyn
     html: `<!doctype html><body>
       <table><tbody>
         <tr class="zA" data-legacy-thread-id="19fc000000000789">
+          <td class="WA">important</td>
           <td class="yX"><span class="yW">recipient</span></td>
         </tr>
         <tr class="zA" data-legacy-thread-id="19fc000000000999">
+          <td class="WA">important</td>
           <td class="yX"><span class="yW">untracked recipient</span></td>
         </tr>
       </tbody></table>
@@ -466,8 +502,12 @@ test("Scheduled rows identify messages whose tracking pixel is registered", asyn
 
   const rows = window.document.querySelectorAll("tr.zA");
   const badge = rows[0].querySelector(".mt-status-badge");
-  assert.equal(badge?.textContent, "Email tracked");
+  assert.equal(badge?.textContent, "");
+  assert.equal(badge?.dataset.mtStatusLabel, "Email tracked");
+  assert.equal(badge?.querySelector(".mt-status-icon")?.dataset.mtIcon, "tracked");
+  assert.equal(badge?.querySelectorAll("path, circle").length, 2);
   assert.equal(badge?.classList.contains("mt-scheduled"), true);
+  assert.equal(badge?.parentElement, rows[0].querySelector("td.WA"));
   assert.equal(badge?.getAttribute("aria-hidden"), "true");
   assert.equal(rows[1].querySelector(".mt-status-badge"), null);
   dom.window.close();
@@ -588,8 +628,10 @@ test("each sent message gets its own history while received messages and Inbox r
 
   const originalBadge = window.document.querySelector("#sent-original .mt-thread-status");
   const replyBadge = window.document.querySelector("#sent-reply .mt-thread-status");
-  assert.equal(originalBadge?.textContent, "Opened 2x");
-  assert.equal(replyBadge?.textContent, "Opened 1x");
+  assert.equal(originalBadge?.dataset.mtStatusLabel, "Opened 2 times");
+  assert.equal(originalBadge?.textContent, "2x");
+  assert.equal(replyBadge?.dataset.mtStatusLabel, "Opened");
+  assert.equal(replyBadge?.textContent, "");
   assert.equal(originalBadge?.parentElement, originalActions.querySelector(".g3"));
   assert.equal(originalActions.childNodes.length, originalHeaderChildren);
 
@@ -618,8 +660,14 @@ test("each sent message gets its own history while received messages and Inbox r
   );
   assert.equal(
     requests.filter((request) => request.options.method === "PATCH").length,
-    0
+    1
   );
+  const replyMapping = requests.find((request) => request.options.method === "PATCH");
+  assert.equal(replyMapping.url.includes("track-reply"), true);
+  assert.deepEqual(JSON.parse(replyMapping.options.body), {
+    gmailThreadId: "19fc000000000123",
+    gmailMessageId: "19fc100000000222",
+  });
 
   let repeatMutations = 0;
   const observer = new window.MutationObserver((records) => {
@@ -686,14 +734,18 @@ test("a Sent message keeps one mounted badge while sender-view status settles", 
   window.eval(await source("src/mt-ui.js"));
   await tick(window);
   const mountedBadge = window.document.querySelector(".mt-thread-status");
-  assert.equal(mountedBadge?.textContent, "Opened 1x");
+  assert.equal(mountedBadge?.dataset.mtStatusLabel, "Opened");
   releaseSelfView();
-  for (let attempt = 0; attempt < 10 && mountedBadge.textContent !== "Not opened"; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < 10 && mountedBadge.dataset.mtStatusLabel !== "Not opened";
+    attempt += 1
+  ) {
     await tick(window);
   }
 
   assert.equal(window.document.querySelector(".mt-thread-status"), mountedBadge);
-  assert.equal(mountedBadge.textContent, "Not opened");
+  assert.equal(mountedBadge.dataset.mtStatusLabel, "Not opened");
   window.dispatchEvent(new window.HashChangeEvent("hashchange"));
   assert.equal(window.document.querySelector(".mt-thread-status"), mountedBadge);
   assert.equal(
@@ -751,7 +803,7 @@ test("returning focus to Gmail refreshes an updated recipient-open status", asyn
   window.eval(await source("src/mt-ui.js"));
   await tick(window);
   assert.equal(
-    window.document.querySelector(".mt-status-badge")?.textContent,
+    window.document.querySelector(".mt-status-badge")?.dataset.mtStatusLabel,
     "Not opened"
   );
 
@@ -760,7 +812,7 @@ test("returning focus to Gmail refreshes an updated recipient-open status", asyn
   await tick(window);
   await tick(window);
 
-  assert.equal(window.document.querySelector(".mt-status-badge")?.textContent, "Opened 1x");
+  assert.equal(window.document.querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Opened");
   assert.equal(listRequests >= openedAfterRequest, true);
   dom.window.close();
 });
@@ -800,16 +852,82 @@ test("post-send monitoring updates the existing Sent badge in place", async () =
   window.eval(await source("src/mt-ui.js"));
   await tick(window);
   const mountedBadge = window.document.querySelector(".mt-status-badge");
-  assert.equal(mountedBadge?.textContent, "Not opened");
+  assert.equal(mountedBadge?.dataset.mtStatusLabel, "Not opened");
 
   window.dispatchEvent(new window.CustomEvent("mailtrack:mapped"));
-  for (let attempt = 0; attempt < 10 && mountedBadge.textContent !== "Opened 1x"; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < 10 && mountedBadge.dataset.mtStatusLabel !== "Opened";
+    attempt += 1
+  ) {
     await tick(window);
   }
 
   assert.equal(window.document.querySelector(".mt-status-badge"), mountedBadge);
-  assert.equal(mountedBadge.textContent, "Opened 1x");
+  assert.equal(mountedBadge.dataset.mtStatusLabel, "Opened");
   assert.equal(listRequests >= 3, true);
+  dom.window.close();
+});
+
+test("a Sent thread row follows the newest reply without changing the original status", async () => {
+  const originalTrack = {
+    id: "track-original",
+    gmailThreadId: "19fc000000000125",
+    gmailMessageId: "19fc100000000111",
+    opened: true,
+    openCount: 2,
+  };
+  const replyTrack = {
+    id: "track-reply",
+    gmailThreadId: "19fc000000000125",
+    gmailMessageId: "19fc100000000222",
+    opened: false,
+    openCount: 0,
+  };
+  let listRequests = 0;
+  const { dom, window } = await createWindow({
+    cache: [replyTrack, originalTrack],
+    html: `<!doctype html><body>
+      <table><tbody>
+        <tr class="zA" data-legacy-thread-id="19fc000000000125">
+          <td class="WA">important</td>
+          <td class="yX"><span class="yW">recipient</span></td>
+          <td><span class="bog">Reply thread</span></td>
+        </tr>
+      </tbody></table>
+    </body>`,
+    async fetchHandler(url) {
+      if (String(url).endsWith("/api/emails")) {
+        listRequests += 1;
+        const currentReply =
+          listRequests >= 3 ? { ...replyTrack, opened: true, openCount: 1 } : replyTrack;
+        return {
+          ok: true,
+          json: async () => ({ emails: [currentReply, originalTrack] }),
+        };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  await tick(window);
+  const mountedBadge = window.document.querySelector(".mt-status-badge");
+  assert.equal(mountedBadge?.dataset.mtStatusLabel, "Not opened");
+
+  window.dispatchEvent(new window.CustomEvent("mailtrack:mapped"));
+  for (
+    let attempt = 0;
+    attempt < 10 && mountedBadge.dataset.mtStatusLabel !== "Opened";
+    attempt += 1
+  ) {
+    await tick(window);
+  }
+
+  assert.equal(window.document.querySelector(".mt-status-badge"), mountedBadge);
+  assert.equal(mountedBadge.dataset.mtStatusLabel, "Opened");
+  assert.equal(originalTrack.opened, true);
+  assert.equal(originalTrack.openCount, 2);
   dom.window.close();
 });
 
@@ -824,7 +942,13 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
     body: '<div>test</div><img src="https://backend.example.test/o/track_ABC-123.gif">',
   });
   const outgoingMessage = [];
-  outgoingMessage[8] = [null, [[null, '<div dir="ltr">test</div>']]];
+  outgoingMessage[8] = [
+    null,
+    [[
+      null,
+      '<div dir="ltr">reply</div><blockquote class="gmail_quote"><img src="https://backend.example.test/o/track-original.gif"></blockquote>',
+    ]],
+  ];
   const messageData = [outgoingMessage];
   const operation = [];
   operation[1] = [null, []];
@@ -837,12 +961,13 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   thread[4] = [message];
   thread[19] = "19fc000000000123";
 
+  let gmailResponse = JSON.stringify([0, [thread]]);
   class FakeXMLHttpRequest extends window.EventTarget {
     open() {}
     send(body) {
       this.requestBody = body;
       this.status = 200;
-      this.responseText = JSON.stringify([0, [thread]]);
+      this.responseText = gmailResponse;
       this.dispatchEvent(new window.Event("load"));
     }
   }
@@ -861,9 +986,9 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
     }
   );
 
-  let sentDetail = null;
+  const sentDetails = [];
   window.addEventListener("mailtrack:gmail-send", (event) => {
-    sentDetail = JSON.parse(event.detail);
+    sentDetails.push(JSON.parse(event.detail));
   });
   window.dispatchEvent(
     new window.CustomEvent("mailtrack:prepare-send", {
@@ -878,11 +1003,13 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   xhr.send(JSON.stringify(outgoingRequest));
   assert.match(xhr.requestBody, /<img width=\\"0\\" height=\\"0\\"/);
   assert.match(xhr.requestBody, /\/o\/track_ABC-123\.gif/);
-  assert.deepEqual(sentDetail, {
-    trackingId: "track_ABC-123",
-    threadId: "19fc000000000123",
-    messageId: "19fc100000000123",
-  });
+  assert.deepEqual(sentDetails, [
+    {
+      trackingId: "track_ABC-123",
+      threadId: "19fc000000000123",
+      messageId: "19fc100000000123",
+    },
+  ]);
 
   window.dispatchEvent(
     new window.CustomEvent("mailtrack:prepare-send", {
@@ -895,8 +1022,17 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   );
   const scheduledXhr = new window.XMLHttpRequest();
   scheduledXhr.open("POST", "/sync/u/0/i/s?rt=r");
+  gmailResponse = JSON.stringify([0, []]);
   scheduledXhr.send(JSON.stringify(outgoingRequest));
-  assert.equal(sentDetail.scheduled, true);
+  assert.equal(sentDetails.length, 1);
+
+  const finalScheduledXhr = new window.XMLHttpRequest();
+  finalScheduledXhr.open("POST", "/sync/u/0/i/s?rt=r");
+  gmailResponse = JSON.stringify([0, [thread]]);
+  finalScheduledXhr.send(JSON.stringify(outgoingRequest));
+  assert.equal(sentDetails.length, 2);
+  assert.equal(sentDetails[1].trackingId, "track_ABC-123");
+  assert.equal(sentDetails[1].scheduled, true);
   dom.window.close();
 });
 
@@ -958,7 +1094,7 @@ test("a recycled Gmail row is rendered after its thread id changes", async () =>
   row.querySelector(".bog").textContent = "new subject";
   await tick(window);
 
-  assert.equal(row.querySelector(".mt-status-badge")?.textContent, "Opened 1x");
+  assert.equal(row.querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Opened");
   dom.window.close();
 });
 
@@ -995,7 +1131,7 @@ test("Gmail decimal thread ids match API hexadecimal ids and temporary row ids a
   await tick(window);
 
   const rows = window.document.querySelectorAll("tr.zA");
-  assert.equal(rows[0].querySelector(".mt-status-badge")?.textContent, "Not opened");
+  assert.equal(rows[0].querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Not opened");
   assert.equal(rows[1].querySelector(".mt-status-badge"), null);
   dom.window.close();
 });
@@ -1033,12 +1169,12 @@ test("a Sent-row badge removed by Gmail remounts in the stable cell", async () =
 
   row.querySelector(".bog").textContent = "same message, rerendered";
   await tick(window);
-  assert.equal(row.querySelector(".mt-status-badge")?.textContent, "Not opened");
+  assert.equal(row.querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Not opened");
   assert.equal(row.querySelector(".mt-status-badge")?.parentElement, cell);
 
   row.setAttribute("data-legacy-thread-id", "19fc00000000000a");
   await tick(window);
-  assert.equal(row.querySelector(".mt-status-badge")?.textContent, "Opened 1x");
+  assert.equal(row.querySelector(".mt-status-badge")?.dataset.mtStatusLabel, "Opened");
   dom.window.close();
 });
 

@@ -3,31 +3,69 @@
 .mt-status-badge {
   display: inline-flex !important;
   align-items: center !important;
+  gap: 3px !important;
   box-sizing: border-box !important;
-  margin: 0 8px 0 0 !important;
-  padding: 1px 7px !important;
+  height: 20px !important;
+  margin: 0 !important;
+  padding: 0 !important;
   border: 0 !important;
-  border-radius: 10px !important;
-  font: 600 11px/16px "Google Sans", Roboto, Arial, sans-serif !important;
+  color: #5f6368 !important;
+  background: transparent !important;
+  font: 600 11px/20px "Google Sans", Roboto, Arial, sans-serif !important;
   white-space: nowrap !important;
   vertical-align: middle !important;
   pointer-events: none !important;
   user-select: none !important;
 }
 
+.mt-status-cell {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+.mt-status-badge.mt-after-importance {
+  position: absolute !important;
+  top: 50% !important;
+  left: calc(100% + 3px) !important;
+  z-index: 1 !important;
+  transform: translateY(-50%) !important;
+}
+
+.mt-status-icon {
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: 18px !important;
+  height: 18px !important;
+  color: inherit !important;
+  background: transparent !important;
+}
+
+.mt-status-count {
+  display: block !important;
+  min-width: max-content !important;
+}
+
+.mt-status-spacer {
+  display: inline-block !important;
+  box-sizing: border-box !important;
+  height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  pointer-events: none !important;
+}
+
 .mt-status-badge.mt-opened {
   color: #188038 !important;
-  background: rgba(24, 128, 56, 0.12) !important;
 }
 
 .mt-status-badge.mt-unopened {
   color: #5f6368 !important;
-  background: rgba(95, 99, 104, 0.12) !important;
 }
 
 .mt-status-badge.mt-scheduled {
   color: #185abc !important;
-  background: rgba(26, 115, 232, 0.12) !important;
+  background: transparent !important;
 }
 
 .mt-thread-status-anchor {
@@ -42,14 +80,14 @@
   display: inline-flex !important;
   align-items: center !important;
   box-sizing: border-box !important;
-  height: 22px !important;
+  gap: 3px !important;
+  height: 20px !important;
   margin: 0 !important;
-  padding: 0 8px !important;
+  padding: 0 !important;
   border: 0 !important;
-  border-radius: 11px !important;
   color: #5f6368 !important;
-  background: rgba(95, 99, 104, 0.12) !important;
-  font: 600 12px/22px "Google Sans", Roboto, Arial, sans-serif !important;
+  background: transparent !important;
+  font: 600 12px/20px "Google Sans", Roboto, Arial, sans-serif !important;
   white-space: nowrap !important;
   appearance: none !important;
   cursor: pointer !important;
@@ -59,10 +97,12 @@
 
 .mt-thread-status.mt-opened {
   color: #188038 !important;
-  background: rgba(24, 128, 56, 0.12) !important;
 }
 
 .mt-thread-status.mt-scheduled {
+  height: 22px !important;
+  padding: 0 8px !important;
+  border-radius: 11px !important;
   color: #185abc !important;
   background: rgba(26, 115, 232, 0.12) !important;
   cursor: default !important;

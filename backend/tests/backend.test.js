@@ -369,6 +369,7 @@ test("core routes register, map, serve, and list a track", async () => {
       headers,
       body: JSON.stringify({
         gmailThreadId: "19fc000000000123",
+        gmailMessageId: "19fc100000000123",
         sentAt,
         scheduled: true,
       }),
@@ -376,7 +377,25 @@ test("core routes register, map, serve, and list a track", async () => {
     assert.equal(mapping.status, 200);
     const storedDatabase = JSON.parse(await fs.readFile(process.env.MAILTRACK_DATA_FILE, "utf8"));
     assert.equal(storedDatabase.emails[0].sent_at, sentAt);
+    assert.equal(storedDatabase.emails[0].sent_at_confirmed, true);
     assert.equal(storedDatabase.emails[0].scheduled, true);
+
+    const laterSentAt = new Date(Date.now() + 1_000).toISOString();
+    const quotedReplyRemap = await fetch(`${baseUrl}/api/emails/track_123456`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        gmailThreadId: "19fc000000000123",
+        gmailMessageId: "19fc100000000999",
+        sentAt: laterSentAt,
+      }),
+    });
+    assert.equal(quotedReplyRemap.status, 200);
+    const remappedDatabase = JSON.parse(
+      await fs.readFile(process.env.MAILTRACK_DATA_FILE, "utf8")
+    );
+    assert.equal(remappedDatabase.emails[0].sent_at, sentAt);
+    assert.equal(remappedDatabase.emails[0].sent_at_confirmed, true);
 
     const pixel = await fetch(`${baseUrl}/o/track_123456.gif`);
     assert.equal(pixel.status, 200);
@@ -389,7 +408,7 @@ test("core routes register, map, serve, and list a track", async () => {
       {
         id: "track_123456",
         gmailThreadId: "19fc000000000123",
-        gmailMessageId: null,
+        gmailMessageId: "19fc100000000999",
         opened: false,
         openCount: 0,
         openHistory: [],

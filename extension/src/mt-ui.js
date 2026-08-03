@@ -16,6 +16,23 @@
   const SELF_VIEW_MIN_WINDOW_MS = 5000;
   const SELF_VIEW_PIXEL_TIMEOUT_MS = 5000;
   const PAGE_STARTED_AT = new Date(performance.timeOrigin || Date.now()).toISOString();
+  const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+  const CLOSED_ENVELOPE =
+    '<rect width="256" height="256" fill="none"/>' +
+    '<polyline points="224 56 128 144 32 56" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<path d="M32,56H224a0,0,0,0,1,0,0V192a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V56A0,0,0,0,1,32,56Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<line x1="110.55" y1="128" x2="34.47" y2="197.74" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<line x1="221.53" y1="197.74" x2="145.45" y2="128" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>';
+  const OPEN_ENVELOPE =
+    '<rect width="256" height="256" fill="none"/>' +
+    '<path d="M32,96V200a8,8,0,0,0,8,8H216a8,8,0,0,0,8-8V96L128,32Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<line x1="110.55" y1="152" x2="34.47" y2="205.74" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<line x1="221.53" y1="205.74" x2="145.45" y2="152" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<polyline points="224 96 145.46 152 110.55 152 32 96" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>';
+  const TRACKED_EYE =
+    '<rect width="256" height="256" fill="none"/>' +
+    '<path d="M128,56C48,56,16,128,16,128s32,72,112,72,112-72,112-72S208,56,128,56Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>' +
+    '<circle cx="128" cy="128" r="40" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>';
 
   let tracks = [];
   let byId = new Map();
@@ -138,8 +155,63 @@
     return null;
   }
 
-  function labelFor(track) {
-    return track.opened ? `Opened ${track.openCount}x` : "Not opened";
+  function statusLabelFor(track) {
+    if (!track.opened) return "Not opened";
+    return track.openCount > 1 ? `Opened ${track.openCount} times` : "Opened";
+  }
+
+  function renderStatusContent(indicator, track, scheduled = false) {
+    const scheduledRow = scheduled && indicator.classList.contains("mt-status-badge");
+    if (scheduled && !scheduledRow) {
+      indicator.textContent = "Email tracked";
+      return;
+    }
+    const icon = document.createElementNS(SVG_NAMESPACE, "svg");
+    icon.setAttribute("class", "mt-status-icon");
+    icon.setAttribute("viewBox", "0 0 256 256");
+    icon.setAttribute("aria-hidden", "true");
+    icon.dataset.mtIcon = scheduledRow ? "tracked" : track.opened ? "opened" : "unopened";
+    icon.innerHTML = scheduledRow
+      ? TRACKED_EYE
+      : track.opened
+        ? OPEN_ENVELOPE
+        : CLOSED_ENVELOPE;
+    indicator.replaceChildren(icon);
+    if (!scheduled && track.opened && track.openCount > 1) {
+      const count = document.createElement("span");
+      count.className = "mt-status-count";
+      count.textContent = `${track.openCount}x`;
+      indicator.appendChild(count);
+    }
+  }
+
+  function removeRowSpacer(row) {
+    row.querySelector(":scope .mt-status-spacer")?.remove();
+  }
+
+  function syncRowSpacer(row, badge, importanceCell, recipientCell) {
+    if (!importanceCell || !recipientCell) {
+      removeRowSpacer(row);
+      return;
+    }
+    const recipientBounds = recipientCell.getBoundingClientRect();
+    const badgeBounds = badge.getBoundingClientRect();
+    const recipientPadding = Number.parseFloat(getComputedStyle(recipientCell).paddingLeft) || 0;
+    const overlap = Math.ceil(badgeBounds.right - (recipientBounds.left + recipientPadding));
+    const width = overlap > 0 ? overlap + 6 : 0;
+    let spacer = recipientCell.querySelector(":scope > .mt-status-spacer");
+    if (width <= 0) {
+      spacer?.remove();
+      return;
+    }
+    if (!spacer) {
+      spacer = document.createElement("span");
+      spacer.className = "mt-status-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      recipientCell.insertBefore(spacer, recipientCell.firstChild);
+    }
+    const nextWidth = `${width}px`;
+    if (spacer.style.width !== nextWidth) spacer.style.width = nextWidth;
   }
 
   function renderRow(row) {
@@ -148,25 +220,45 @@
     const existing = row.querySelector(":scope .mt-status-badge");
     if (!track) {
       existing?.remove();
+      removeRowSpacer(row);
+      row.querySelector("td.mt-status-cell")?.classList.remove("mt-status-cell");
       return;
     }
 
+    const importanceCell = row.querySelector("td.WA");
+    const recipientCell = row.querySelector("td.yX");
+    const cell = importanceCell || recipientCell;
+    if (!cell) return;
     const scheduled = isScheduledRoute();
     const signature = scheduled
       ? `${track.id}|scheduled`
       : `${track.id}|${track.opened}|${track.openCount}`;
-    if (existing?.dataset.mtSignature === signature) return;
+    const mountedCorrectly =
+      existing?.parentElement === cell &&
+      (!importanceCell ||
+        (importanceCell.classList.contains("mt-status-cell") &&
+          existing.classList.contains("mt-after-importance")));
+    if (existing?.dataset.mtSignature === signature && mountedCorrectly) {
+      syncRowSpacer(row, existing, importanceCell, recipientCell);
+      return;
+    }
     const badge = existing || document.createElement("span");
     badge.className = scheduled
       ? "mt-status-badge mt-scheduled"
       : `mt-status-badge ${track.opened ? "mt-opened" : "mt-unopened"}`;
+    if (importanceCell) {
+      importanceCell.classList.add("mt-status-cell");
+      badge.classList.add("mt-after-importance");
+    }
     badge.dataset.mtSignature = signature;
     badge.setAttribute("aria-hidden", "true");
-    badge.textContent = scheduled ? "Email tracked" : labelFor(track);
-    if (existing) return;
-
-    const cell = row.querySelector("td.yX");
-    if (cell) cell.insertBefore(badge, cell.firstChild);
+    badge.dataset.mtStatusLabel = scheduled ? "Email tracked" : statusLabelFor(track);
+    renderStatusContent(badge, track, scheduled);
+    if (badge.parentElement !== cell) {
+      if (importanceCell) cell.appendChild(badge);
+      else cell.insertBefore(badge, cell.firstChild);
+    }
+    syncRowSpacer(row, badge, importanceCell, recipientCell);
   }
 
   function observeTrackedRows() {
@@ -406,7 +498,7 @@
       const threadId = threadIdFrom(message) || pageThreadId;
       const threadTracks = tracksByThread.get(threadId) || [];
       const uniqueThreadTrack = threadTracks.length === 1 ? threadTracks[0] : null;
-      const track = byMessage.get(messageId) || byId.get(pixelId) || uniqueThreadTrack;
+      const track = byId.get(pixelId) || byMessage.get(messageId) || uniqueThreadTrack;
       if (!track) continue;
       if (isTrackedListRoute() && selfViewStates.get(track.id) !== "settled") {
         settleSelfView(track, message);
@@ -418,30 +510,40 @@
       const indicator = messageIndicators.get(timestamp) || createMessageIndicator(timestamp);
       indicator.trackId = track.id;
       const scheduled = isScheduledRoute();
-      const label = scheduled ? "Email tracked" : labelFor(track);
       const badgeClass = scheduled
         ? "mt-thread-status mt-scheduled"
         : `mt-thread-status ${track.opened ? "mt-opened" : "mt-unopened"}`;
       if (indicator.badge.className !== badgeClass) indicator.badge.className = badgeClass;
-      if (indicator.badge.textContent !== label) indicator.badge.textContent = label;
+      const statusSignature = scheduled
+        ? `${track.id}|scheduled`
+        : `${track.id}|${track.opened}|${track.openCount}`;
+      if (indicator.badge.dataset.mtSignature !== statusSignature) {
+        indicator.badge.dataset.mtSignature = statusSignature;
+        indicator.badge.dataset.mtStatusLabel = scheduled
+          ? "Email tracked"
+          : statusLabelFor(track);
+        renderStatusContent(indicator.badge, track, scheduled);
+      }
       if (indicator.badge.disabled !== scheduled) indicator.badge.disabled = scheduled;
       const ariaLabel = scheduled
         ? "Email tracking enabled"
-        : "Show open history for this sent message";
+        : `Show open history for this sent message. ${statusLabelFor(track)}.`;
       if (indicator.badge.getAttribute("aria-label") !== ariaLabel) {
         indicator.badge.setAttribute("aria-label", ariaLabel);
       }
       if (scheduled && !indicator.card.hidden) setHistoryOpen(indicator, false);
       updateHistoryCard(indicator.card, track);
 
-      const mappingKey = `${track.id}|${threadId}`;
+      const mappingKey = `${track.id}|${threadId}|${messageId || ""}`;
       if (
         threadId &&
-        normalizeThreadId(track.gmailThreadId) !== threadId &&
+        (normalizeThreadId(track.gmailThreadId) !== threadId ||
+          (messageId && normalizeThreadId(track.gmailMessageId) !== messageId)) &&
         !mappedThreadIds.has(mappingKey)
       ) {
         mappedThreadIds.add(mappingKey);
         track.gmailThreadId = threadId;
+        if (messageId) track.gmailMessageId = messageId;
         window.MT.api.mapGmailThread(track.id, { threadId, messageId }).catch(() => {});
       }
     }
