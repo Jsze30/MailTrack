@@ -52,6 +52,7 @@
   let selfViewRouteStartedAt = PAGE_STARTED_AT;
   let initialRouteHandled = false;
   let mappedThreadIds = new Set();
+  let mirroredTracksByThread = new Map();
   let refreshPromise = null;
 
   function isSentRoute() {
@@ -110,6 +111,10 @@
         tracksByThread.set(threadId, threadTracks);
       }
       if (messageId && !byMessage.has(messageId)) byMessage.set(messageId, track);
+    }
+    for (const [threadId, mirroredTrack] of mirroredTracksByThread) {
+      const refreshedTrack = byId.get(mirroredTrack.id);
+      if (refreshedTrack) mirroredTracksByThread.set(threadId, refreshedTrack);
     }
   }
 
@@ -216,7 +221,7 @@
 
   function renderRow(row) {
     const threadId = threadIdFrom(row);
-    const track = byThread.get(threadId);
+    const track = mirroredTracksByThread.get(threadId) || byThread.get(threadId);
     const existing = row.querySelector(":scope .mt-status-badge");
     if (!track) {
       existing?.remove();
@@ -500,6 +505,7 @@
       const uniqueThreadTrack = threadTracks.length === 1 ? threadTracks[0] : null;
       const track = byId.get(pixelId) || byMessage.get(messageId) || uniqueThreadTrack;
       if (!track) continue;
+      if (threadId) mirroredTracksByThread.set(threadId, track);
       if (isTrackedListRoute() && selfViewStates.get(track.id) !== "settled") {
         settleSelfView(track, message);
       }

@@ -1,5 +1,77 @@
 /* Passive MailTrack status indicators. */
 
+.mt-send-later-row {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  box-sizing: border-box !important;
+  gap: 4px !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 10px 16px !important;
+  border-top: 1px solid #e8eaed !important;
+  color: #3c4043 !important;
+  background: #fff !important;
+  font: 400 12px/16px "Google Sans", Roboto, Arial, sans-serif !important;
+}
+
+.mt-send-later-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+
+.mt-send-later-button {
+  flex: 0 0 auto !important;
+  height: 36px !important;
+  padding: 0 16px !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  color: #fff !important;
+  background: var(--mt-send-bg, #0b57d0) !important;
+  font: 500 14px/36px "Google Sans", Roboto, Arial, sans-serif !important;
+  text-align: center !important;
+  cursor: pointer !important;
+}
+
+.mt-send-later-button:disabled {
+  color: #80868b !important;
+  background: #e8eaed !important;
+  cursor: default !important;
+}
+
+.mt-send-later-input {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 36px !important;
+  padding: 0 12px !important;
+  border: 1px solid #dadce0 !important;
+  border-radius: 8px !important;
+  outline: 0 !important;
+  color: #202124 !important;
+  background: #fff !important;
+  font: 400 13px/34px "Google Sans", Roboto, Arial, sans-serif !important;
+}
+
+.mt-send-later-input:focus {
+  border-color: #1a73e8 !important;
+  box-shadow: 0 0 0 1px #1a73e8 !important;
+}
+
+.mt-send-later-preview {
+  min-height: 16px !important;
+  color: #5f6368 !important;
+}
+
+.mt-send-later-valid {
+  color: #188038 !important;
+}
+
+.mt-send-later-error {
+  color: #b3261e !important;
+}
+
 .mt-status-badge {
   display: inline-flex !important;
   align-items: center !important;

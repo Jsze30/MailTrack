@@ -55,7 +55,7 @@ async function createWindow({
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: "2.0.27" }),
+      getManifest: () => ({ version: "2.0.37" }),
       sendMessage(message, callback) {
         callback(runtimeHandler ? runtimeHandler(message) : { ok: false, error: "not connected" });
       },
@@ -81,6 +81,7 @@ async function createWindow({
   window.fetch = fetchHandler;
   window.console.warn = () => {};
   window.eval(await source("src/mt-core.js"));
+  window.eval(await source("src/schedule-time.js"));
   await window.MT.ready;
   return { dom, window };
 }
@@ -170,6 +171,7 @@ test("Send is blocked until one pixel is inserted and Gmail is synchronized", as
     gmailClicks += 1;
   });
   send.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await tick(window);
   await tick(window);
   assert.equal(gmailClicks, 1);
   assert.equal(gmailCaptureSends, 1);
@@ -269,104 +271,229 @@ test("an inline Gmail reply is tracked before Gmail sends it", async () => {
   dom.window.close();
 });
 
-test("Schedule send is blocked until the compose is prepared exactly like Send", async () => {
+test("Send later schedules a pixel-tracked new message without Gmail Schedule send", async () => {
   const requests = [];
   const { dom, window } = await createWindow({
     html: `<!doctype html><body>
-      <div role="dialog" id="compose">
-        <div aria-label="Message Body" role="textbox" contenteditable="true">Scheduled body</div>
-        <div role="button" data-tooltip="Send">Send</div>
-        <div role="button" data-tooltip="More send options">More send options</div>
+      <div role="dialog" id="outer-dialog">
+        <div class="M9" id="inner-compose">
+          <div
+            role="region"
+            data-compose-id="4"
+            aria-label="New Message"
+            id="compose"
+            style="position: fixed; bottom: 0; height: 500px"
+          >
+            <div name="to" aria-label="To">
+              <span data-hovercard-id="chip@example.com"></span>
+              <input type="text" role="combobox" aria-label="To recipients" value="recipient@example.com">
+            </div>
+            <input name="subjectbox" value="Scheduled subject">
+            <div aria-label="Message Body" role="textbox" contenteditable="true">Scheduled body</div>
+            <div class="aDg" id="send-spacer" style="height: 116px">
+              <div class="aDj" id="send-panel" style="height: 116px; bottom: 0px">
+                <div class="aDh" id="send-controls">
+                  <table class="IZ" id="gmail-toolbar"><tbody>
+                    <tr class="btC">
+                      <td class="gU Up"><div role="button" data-tooltip="Send">Send</div></td>
+                      <td class="gU a0z"><div role="button" data-tooltip="Discard draft">Discard draft</div></td>
+                    </tr>
+                  </tbody></table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div role="menuitem" id="schedule-send">Schedule send</div>
     </body>`,
     async fetchHandler(url, options = {}) {
       requests.push({ url: String(url), options });
+      if (String(url).endsWith("/api/oauth/google/status")) {
+        return { ok: true, json: async () => ({ connected: true, email: "sender@example.com" }) };
+      }
+      if (String(url).endsWith("/api/scheduled-emails")) {
+        return {
+          ok: true,
+          json: async () => ({ ok: true, email: { id: "scheduled-1", status: "pending" } }),
+        };
+      }
       return { ok: true, json: async () => ({ ok: true }) };
     },
   });
 
   window.eval(await source("src/send-gate.js"));
   const body = window.document.querySelector('[aria-label="Message Body"]');
-  let gmailScheduleClicks = 0;
-  let gmailSendClicks = 0;
-  let serializedBody = "";
-  let inputEvents = 0;
-  let syncEvents = 0;
-  let preparedSend = null;
-  body.addEventListener("input", () => {
-    inputEvents += 1;
-  });
-  body.addEventListener("keydown", (event) => {
-    if (event.key === "Control") syncEvents += 1;
-  });
+  const composeRoot = window.document.querySelector("#compose");
+  const nativeBounds = window.Element.prototype.getBoundingClientRect;
+  window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList?.contains("mt-send-later-row")) {
+      return { width: 700, height: 60, top: 0, right: 700, bottom: 60, left: 0 };
+    }
+    if (this.getAttribute?.("data-tooltip") === "Send") {
+      return { width: 70, height: 36, top: 0, right: 118, bottom: 36, left: 48 };
+    }
+    if (this.classList?.contains("mt-send-later-button")) {
+      return { width: 110, height: 36, top: 0, right: 200, bottom: 36, left: 90 };
+    }
+    return nativeBounds.call(this);
+  };
+  let discardClicks = 0;
   window.document.addEventListener(
     "click",
     (event) => {
-      if (event.target.closest?.("#schedule-send")) {
-        gmailScheduleClicks += 1;
-        serializedBody = body.innerHTML;
-      }
-      if (event.target.closest?.('[data-tooltip="Send"]')) gmailSendClicks += 1;
+      if (event.target.closest?.('[data-tooltip="Discard draft"]')) discardClicks += 1;
     },
     true
   );
-  window.addEventListener("mailtrack:prepare-send", (event) => {
-    preparedSend = JSON.parse(event.detail);
-  });
+  const recipientInput = window.document.querySelector('[name="to"] input[type="text"]');
+  recipientInput.focus();
   window.eval(await source("src/content.js"));
-  body.dispatchEvent(new window.FocusEvent("focusin", { bubbles: true }));
+  recipientInput.dispatchEvent(new window.FocusEvent("focusin", { bubbles: true }));
+  await tick(window);
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+
+  const input = window.document.querySelector(".mt-send-later-input");
+  const button = window.document.querySelector(".mt-send-later-button");
+  const schedulerRow = window.document.querySelector(".mt-send-later-row");
+  assert.ok(input);
+  assert.ok(button);
+  assert.equal(window.document.querySelector("#outer-dialog").style.height, "");
+  assert.equal(window.document.querySelector("#inner-compose").style.height, "");
+  // Boomerang-style mount: appended as the last child of the .aDh send-controls wrapper,
+  // right after Gmail's native toolbar table - the toolbar itself is never touched.
+  assert.equal(schedulerRow.parentElement.id, "send-controls");
+  assert.equal(schedulerRow.previousElementSibling.id, "gmail-toolbar");
+  assert.equal(schedulerRow.nextElementSibling, null);
+  assert.equal(window.document.querySelector("#gmail-toolbar [data-tooltip='Send']")?.textContent, "Send");
+  assert.equal(window.document.querySelector("tr.btC").children.length, 2);
+  assert.equal(window.document.querySelector("#send-controls").getAttribute("style"), null);
+  assert.equal(window.document.querySelector("#gmail-toolbar").getAttribute("style"), null);
+  // The docked panel (.aDj), its spacer (.aDg) and the compose region (.aoI) each get min-height
+  // room for the row so the bottom-anchored window extends upward instead of clipping the Send
+  // button. The room is enforced through an injected stylesheet (not inline styles) so Gmail's
+  // wholesale rewrites of these elements' inline style attribute can't wipe it. Gmail's own
+  // inline height on the compose is left untouched.
+  assert.equal(composeRoot.style.getPropertyValue("height"), "500px");
+  assert.equal(composeRoot.style.getPropertyValue("min-height"), "");
+  assert.equal(composeRoot.style.getPropertyValue("bottom"), "0px");
+  assert.equal(window.document.querySelector("#send-spacer").style.getPropertyValue("min-height"), "");
+  const fitCss = window.document.getElementById("mt-scheduler-fit").textContent;
+  assert.match(fitCss, /\[data-compose-id="4"\]\{min-height:560px !important\}/);
+  assert.match(fitCss, /\[data-compose-id="4"\] \.aDg\{min-height:176px !important\}/);
+  assert.match(fitCss, /\[data-compose-id="4"\] \.aDj\{min-height:176px !important\}/);
+  // The button is shifted so its left edge (90) lines up with the native Send button (48), and
+  // it takes the native Send button's width (70) so the two read as a matched pair.
+  assert.equal(button.style.getPropertyValue("margin-left"), "-42px");
+  assert.equal(button.style.getPropertyValue("min-width"), "70px");
+  input.value = "tomorrow 11am";
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await tick(window);
+  assert.equal(button.disabled, false);
+  button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await tick(window);
 
-  window.document
-    .querySelector('[data-tooltip="More send options"]')
-    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  window.document
-    .querySelector("#schedule-send")
-    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await tick(window);
+  const scheduledRequest = requests.find(
+    (request) => request.url.endsWith("/api/scheduled-emails") && request.options.method === "POST"
+  );
+  assert.ok(scheduledRequest);
+  const scheduledBody = JSON.parse(scheduledRequest.options.body);
+  assert.deepEqual(scheduledBody.recipients, ["chip@example.com", "recipient@example.com"]);
+  assert.equal(scheduledBody.subject, "Scheduled subject");
+  assert.equal(scheduledBody.bodyHtml, "Scheduled body");
+  assert.equal(scheduledBody.localMinute, 0);
+  assert.match(scheduledBody.trackingId, /^[A-Za-z0-9_-]{8,128}$/);
+  assert.equal(body.querySelector("img[data-mailtrack-pixel]"), null);
+  assert.equal(discardClicks, 1);
+  composeRoot.remove();
+  assert.equal(schedulerRow.isConnected, false);
+  window.Element.prototype.getBoundingClientRect = nativeBounds;
+  dom.window.close();
+});
 
-  assert.equal(gmailScheduleClicks, 1);
-  assert.equal(gmailSendClicks, 0);
-  assert.equal(inputEvents, 1);
-  assert.equal(syncEvents, 1);
-  assert.match(serializedBody, /\/o\/[A-Za-z0-9_-]+\.gif/);
-  assert.equal(body.querySelectorAll("img[data-mailtrack-pixel]").length, 1);
-  assert.match(preparedSend?.pixelUrl || "", /\/o\/[A-Za-z0-9_-]+\.gif$/);
-  assert.equal(preparedSend?.scheduled, true);
-  assert.equal(
-    requests.filter(
-      (request) => request.url.endsWith("/api/emails") && request.options.method === "POST"
-    ).length,
-    2
-  );
+test("scheduler grows a compose region that has no inline height", async () => {
+  const { dom, window } = await createWindow({
+    html: `<!doctype html><body>
+      <div role="region" data-compose-id="7" aria-label="New Message" id="compose">
+        <div name="to" aria-label="To"><input type="text" role="combobox" value="a@example.com"></div>
+        <input name="subjectbox" value="s">
+        <div aria-label="Message Body" role="textbox" contenteditable="true">b</div>
+        <div class="aDg" id="send-spacer" style="height: 116px">
+          <div class="aDj" id="send-panel" style="height: 116px">
+            <div class="aDh" id="send-controls">
+              <table class="IZ" id="gmail-toolbar"><tbody>
+                <tr class="btC"><td><div role="button" data-tooltip="Send">Send</div></td></tr>
+              </tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </body>`,
+    async fetchHandler(url) {
+      if (String(url).endsWith("/api/oauth/google/status")) {
+        return { ok: true, json: async () => ({ connected: true }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
 
-  const trackingId = body.querySelector("img[data-mailtrack-pixel]").dataset.mailtrackPixel;
-  window.dispatchEvent(
-    new window.CustomEvent("mailtrack:gmail-send", {
-      detail: JSON.stringify({
-        trackingId,
-        threadId: "19fc000000000789",
-        messageId: "19fc100000000789",
-        scheduled: true,
-      }),
-    })
-  );
+  window.eval(await source("src/send-gate.js"));
+  const composeRoot = window.document.querySelector("#compose");
+  const nativeBounds = window.Element.prototype.getBoundingClientRect;
+  window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this === composeRoot) {
+      return { width: 500, height: 480, top: 0, right: 500, bottom: 480, left: 0 };
+    }
+    if (this.classList?.contains("mt-send-later-row")) {
+      return { width: 500, height: 60, top: 0, right: 500, bottom: 60, left: 0 };
+    }
+    return nativeBounds.call(this);
+  };
+  const recipientInput = window.document.querySelector('[name="to"] input[type="text"]');
+  recipientInput.focus();
+  window.eval(await source("src/content.js"));
+  recipientInput.dispatchEvent(new window.FocusEvent("focusin", { bubbles: true }));
   await tick(window);
-  assert.equal(
-    requests.filter(
-      (request) =>
-        request.url.includes(`/api/emails/${trackingId}`) && request.options.method === "PATCH"
-    ).length,
-    1
-  );
-  const scheduledMappingRequest = requests.find(
-    (request) =>
-      request.url.includes(`/api/emails/${trackingId}`) && request.options.method === "PATCH"
-  );
-  const scheduledMappingBody = JSON.parse(scheduledMappingRequest.options.body);
-  assert.equal(Number.isNaN(new Date(scheduledMappingBody.sentAt).getTime()), false);
-  assert.equal(scheduledMappingBody.scheduled, true);
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+
+  assert.ok(window.document.querySelector(".mt-send-later-row"));
+  assert.equal(composeRoot.getAttribute("style"), null);
+  const fitCss = window.document.getElementById("mt-scheduler-fit").textContent;
+  // No inline region height, so the region base is its rendered height (480 + 60 = 540).
+  assert.match(fitCss, /\[data-compose-id="7"\]\{min-height:540px !important\}/);
+  assert.match(fitCss, /\[data-compose-id="7"\] \.aDg\{min-height:176px !important\}/);
+  assert.match(fitCss, /\[data-compose-id="7"\] \.aDj\{min-height:176px !important\}/);
+  window.Element.prototype.getBoundingClientRect = nativeBounds;
+  dom.window.close();
+});
+
+test("whole-hour parser resolves natural language and rejects minutes", async () => {
+  const { dom, window } = await createWindow({
+    html: "<!doctype html><body></body>",
+    async fetchHandler() {
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+  const now = new Date(2026, 7, 3, 10, 0, 0, 0);
+  const nextTuesday = window.MTScheduleTime.parse("tue 11am", now);
+  assert.equal(nextTuesday.valid, true);
+  assert.equal(nextTuesday.date.getFullYear(), 2026);
+  assert.equal(nextTuesday.date.getMonth(), 7);
+  assert.equal(nextTuesday.date.getDate(), 4);
+  assert.equal(nextTuesday.date.getHours(), 11);
+  assert.equal(window.MTScheduleTime.parse("tomorrow 11:30am", now).valid, false);
+  assert.equal(window.MTScheduleTime.parse("today 9am", now).valid, false);
+  assert.equal(window.MTScheduleTime.parse("2026-08-04 23", now).valid, true);
+
+  // "tod" and "tom" abbreviate today and tomorrow.
+  const abbrevTomorrow = window.MTScheduleTime.parse("tom 11am", now);
+  assert.equal(abbrevTomorrow.valid, true);
+  assert.equal(abbrevTomorrow.date.getDate(), 4);
+  assert.equal(abbrevTomorrow.date.getHours(), 11);
+  const abbrevToday = window.MTScheduleTime.parse("tod 3pm", now);
+  assert.equal(abbrevToday.valid, true);
+  assert.equal(abbrevToday.date.getDate(), 3);
+  assert.equal(abbrevToday.date.getHours(), 15);
+  assert.equal(window.MTScheduleTime.parse("tod 9am", now).valid, false);
   dom.window.close();
 });
 
@@ -687,6 +814,63 @@ test("each sent message gets its own history while received messages and Inbox r
   star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   assert.equal(starClicks, 1);
 
+  dom.window.close();
+});
+
+test("a Sent row mirrors the exact track shown by the email-page icon", async () => {
+  const threadTrack = {
+    id: "track-thread-default",
+    gmailThreadId: "19fc000000000127",
+    gmailMessageId: "19fc100000000111",
+    opened: true,
+    openCount: 2,
+  };
+  const pageTrack = {
+    id: "track-page-exact",
+    gmailThreadId: "19fc000000000127",
+    gmailMessageId: "19fc100000000222",
+    opened: false,
+    openCount: 0,
+  };
+  const tracks = [threadTrack, pageTrack];
+  const { dom, window } = await createWindow({
+    url: "https://mail.google.com/mail/u/0/#inbox/19fc000000000127",
+    cache: tracks,
+    html: `<!doctype html><body>
+      <table><tbody>
+        <tr class="zA" data-legacy-thread-id="19fc000000000127">
+          <td class="WA">important</td>
+          <td class="yX"><span class="yW">recipient</span></td>
+        </tr>
+      </tbody></table>
+      <div class="adn" id="exact-message" data-legacy-thread-id="19fc000000000127" data-legacy-message-id="19fc100000000222">
+        <div><span class="g3">5:20 AM</span></div>
+        <img data-mailtrack-pixel="track-page-exact" src="https://backend.example.test/o/track-page-exact.gif">
+      </div>
+    </body>`,
+    async fetchHandler(url) {
+      if (String(url).endsWith("/api/emails")) {
+        return { ok: true, json: async () => ({ emails: tracks }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  await tick(window);
+  assert.equal(
+    window.document.querySelector(".mt-thread-status")?.dataset.mtStatusLabel,
+    "Not opened"
+  );
+
+  window.document.querySelector("#exact-message").remove();
+  window.location.hash = "#sent";
+  window.dispatchEvent(new window.HashChangeEvent("hashchange"));
+  await tick(window);
+
+  const rowBadge = window.document.querySelector(".mt-status-badge");
+  assert.equal(rowBadge?.dataset.mtStatusLabel, "Not opened");
+  assert.equal(rowBadge?.textContent, "");
   dom.window.close();
 });
 

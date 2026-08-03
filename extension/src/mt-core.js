@@ -45,8 +45,11 @@ window.MT = (() => {
         ...(options.headers || {}),
       },
     });
-    if (!response.ok) throw new Error(`MailTrack backend returned ${response.status}`);
-    return response.json();
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `MailTrack backend returned ${response.status}`);
+    }
+    return payload;
   }
 
   MT.api = {
@@ -75,6 +78,23 @@ window.MT = (() => {
       return apiFetch(`/api/emails/${encodeURIComponent(id)}/selfview`, {
         method: "POST",
         body: JSON.stringify({ phase, viewedAt }),
+      });
+    },
+    googleStatus() {
+      return apiFetch("/api/oauth/google/status");
+    },
+    scheduleEmail(email) {
+      return apiFetch("/api/scheduled-emails", {
+        method: "POST",
+        body: JSON.stringify(email),
+      });
+    },
+    listScheduledEmails() {
+      return apiFetch("/api/scheduled-emails").then((result) => result.emails || []);
+    },
+    cancelScheduledEmail(id) {
+      return apiFetch(`/api/scheduled-emails/${encodeURIComponent(id)}`, {
+        method: "DELETE",
       });
     },
   };
