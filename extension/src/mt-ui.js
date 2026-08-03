@@ -9,6 +9,9 @@
   const MESSAGE_SELECTOR = ".adn, .gs";
   const RETRY_DELAYS = [0, 100, 300, 800, 1500, 3000];
   const STATUS_REFRESH_DELAYS = [750, 2000];
+  const POST_SEND_REFRESH_MS = 3000;
+  const POST_SEND_REFRESH_LIMIT = 40;
+  const OPENED_CONFIRMATION_POLLS = 4;
   const SELF_VIEW_SETTLE_MS = 500;
   const SELF_VIEW_MIN_WINDOW_MS = 5000;
   const SELF_VIEW_PIXEL_TIMEOUT_MS = 5000;
@@ -25,6 +28,8 @@
   let routeGeneration = 0;
   let retryTimers = [];
   let statusRefreshTimers = [];
+  let postSendRefreshTimer = null;
+  let postSendRefreshGeneration = 0;
   let selfViewStates = new Map();
   let selfViewRouteKey = null;
   let selfViewRouteStartedAt = PAGE_STARTED_AT;
@@ -471,6 +476,38 @@
     }
   }
 
+  async function monitorRecentSend() {
+    postSendRefreshGeneration += 1;
+    const generation = postSendRefreshGeneration;
+    clearTimeout(postSendRefreshTimer);
+    postSendRefreshTimer = null;
+
+    const rows = await refreshTracks();
+    const watchedTrackId = rows[0]?.id;
+    if (!watchedTrackId) return;
+
+    let remainingPolls = POST_SEND_REFRESH_LIMIT;
+    let openedConfirmationPolls = 0;
+    const poll = async () => {
+      if (generation !== postSendRefreshGeneration || remainingPolls <= 0) return;
+      remainingPolls -= 1;
+
+      if (!document.hidden) {
+        await refreshTracks();
+        const watchedTrack = byId.get(watchedTrackId);
+        openedConfirmationPolls = watchedTrack?.opened
+          ? openedConfirmationPolls + 1
+          : 0;
+        if (openedConfirmationPolls >= OPENED_CONFIRMATION_POLLS) return;
+      }
+
+      if (generation !== postSendRefreshGeneration || remainingPolls <= 0) return;
+      postSendRefreshTimer = setTimeout(poll, POST_SEND_REFRESH_MS);
+    };
+
+    postSendRefreshTimer = setTimeout(poll, POST_SEND_REFRESH_MS);
+  }
+
   function handleRoute() {
     stopRouteWork();
     selfViewRouteStartedAt = initialRouteHandled ? new Date().toISOString() : PAGE_STARTED_AT;
@@ -499,7 +536,11 @@
   }
 
   window.addEventListener("hashchange", handleRoute);
-  window.addEventListener("mailtrack:mapped", () => refreshTracks());
+  window.addEventListener("mailtrack:mapped", () => {
+    monitorRecentSend().catch((error) => {
+      console.warn("[MailTrack] post-send status monitoring failed", error);
+    });
+  });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) scheduleStatusRefreshes();
   });

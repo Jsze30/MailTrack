@@ -42,7 +42,7 @@ Version 2 keeps the existing `/api/emails` route names so the extension can be r
 2. Enable Developer mode.
 3. Select Load unpacked and choose the `extension/` directory.
 4. Open the MailTrack popup and save the backend URL and shared secret.
-5. Confirm the popup displays extension version `2.0.24`.
+5. Confirm the popup displays extension version `2.0.25`.
 6. Reload Gmail in a new tab.
 
 ## Test

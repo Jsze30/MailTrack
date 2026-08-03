@@ -55,7 +55,7 @@ async function createWindow({
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: "2.0.24" }),
+      getManifest: () => ({ version: "2.0.25" }),
       sendMessage(message, callback) {
         callback(runtimeHandler ? runtimeHandler(message) : { ok: false, error: "not connected" });
       },
@@ -762,6 +762,54 @@ test("returning focus to Gmail refreshes an updated recipient-open status", asyn
 
   assert.equal(window.document.querySelector(".mt-status-badge")?.textContent, "Opened 1x");
   assert.equal(listRequests >= openedAfterRequest, true);
+  dom.window.close();
+});
+
+test("post-send monitoring updates the existing Sent badge in place", async () => {
+  const unopenedTrack = {
+    id: "track-live-update",
+    gmailThreadId: "19fc000000000124",
+    opened: false,
+    openCount: 0,
+  };
+  let listRequests = 0;
+  const { dom, window } = await createWindow({
+    cache: [unopenedTrack],
+    html: `<!doctype html><body>
+      <table><tbody>
+        <tr class="zA" data-legacy-thread-id="19fc000000000124">
+          <td class="WA">important</td>
+          <td class="yX"><span class="yW">recipient</span></td>
+          <td><span class="bog">Tracked email</span></td>
+        </tr>
+      </tbody></table>
+    </body>`,
+    async fetchHandler(url) {
+      if (String(url).endsWith("/api/emails")) {
+        listRequests += 1;
+        const track =
+          listRequests >= 3
+            ? { ...unopenedTrack, opened: true, openCount: 1 }
+            : unopenedTrack;
+        return { ok: true, json: async () => ({ emails: [track] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  await tick(window);
+  const mountedBadge = window.document.querySelector(".mt-status-badge");
+  assert.equal(mountedBadge?.textContent, "Not opened");
+
+  window.dispatchEvent(new window.CustomEvent("mailtrack:mapped"));
+  for (let attempt = 0; attempt < 10 && mountedBadge.textContent !== "Opened 1x"; attempt += 1) {
+    await tick(window);
+  }
+
+  assert.equal(window.document.querySelector(".mt-status-badge"), mountedBadge);
+  assert.equal(mountedBadge.textContent, "Opened 1x");
+  assert.equal(listRequests >= 3, true);
   dom.window.close();
 });
 
