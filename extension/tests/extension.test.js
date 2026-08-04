@@ -55,7 +55,7 @@ async function createWindow({
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: "2.0.38" }),
+      getManifest: () => ({ version: "2.0.39" }),
       sendMessage(message, callback) {
         callback(runtimeHandler ? runtimeHandler(message) : { ok: false, error: "not connected" });
       },
@@ -289,6 +289,7 @@ test("Send later schedules a pixel-tracked new message without Gmail Schedule se
               <input type="text" role="combobox" aria-label="To recipients" value="recipient@example.com">
             </div>
             <input name="subjectbox" value="Scheduled subject">
+            <textarea class="Ak aiL" aria-label="Message Body"></textarea>
             <div aria-label="Message Body" role="textbox" contenteditable="true">Scheduled body</div>
             <div class="aDg" id="send-spacer" style="height: 116px">
               <div class="aDj" id="send-panel" style="height: 116px; bottom: 0px">
@@ -322,7 +323,9 @@ test("Send later schedules a pixel-tracked new message without Gmail Schedule se
   });
 
   window.eval(await source("src/send-gate.js"));
-  const body = window.document.querySelector('[aria-label="Message Body"]');
+  const body = window.document.querySelector(
+    '[aria-label="Message Body"][contenteditable="true"]'
+  );
   const composeRoot = window.document.querySelector("#compose");
   const nativeBounds = window.Element.prototype.getBoundingClientRect;
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
@@ -400,6 +403,7 @@ test("Send later schedules a pixel-tracked new message without Gmail Schedule se
   assert.deepEqual(scheduledBody.recipients, ["chip@example.com", "recipient@example.com"]);
   assert.equal(scheduledBody.subject, "Scheduled subject");
   assert.equal(scheduledBody.bodyHtml, "Scheduled body");
+  assert.equal(window.document.querySelector("textarea").hasAttribute("data-mailtrack-id"), false);
   assert.equal(scheduledBody.localMinute, 0);
   assert.match(scheduledBody.trackingId, /^[A-Za-z0-9_-]{8,128}$/);
   assert.equal(body.querySelector("img[data-mailtrack-pixel]"), null);

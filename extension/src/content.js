@@ -4,7 +4,7 @@
   "use strict";
 
   const BODY_SELECTOR =
-    '.Am, [aria-label="Message Body"], [g_editable="true"][role="textbox"], [contenteditable="true"][role="textbox"]';
+    '.Am[contenteditable="true"][role="textbox"], [aria-label="Message Body"][contenteditable="true"][role="textbox"], [g_editable="true"][contenteditable="true"][role="textbox"]';
   const GMAIL_COMPOSE_REGION = '[role="region"][data-compose-id]';
   const COMPOSE_SELECTOR = `${GMAIL_COMPOSE_REGION}, .M9, [role="dialog"], .nH.Hd, .ip`;
   const PIXEL_MARKER = "data-mailtrack-pixel";
