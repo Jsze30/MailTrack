@@ -1,15 +1,18 @@
 import crypto from "node:crypto";
 import * as store from "./store.js";
 import { decryptToken } from "./token-crypto.js";
-import { appendTrackingPixel } from "./mime.js";
-import { refreshAccessToken, sendGmailMessageWithAccessToken } from "./google.js";
+import { refreshAccessToken, sendGmailDraftWithAccessToken } from "./google.js";
 
-function publicBaseUrl() {
+export function publicBaseUrl() {
   if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/+$/, "");
   if (process.env.GOOGLE_REDIRECT_URI) {
     return new URL(process.env.GOOGLE_REDIRECT_URI).origin;
   }
   throw new Error("PUBLIC_BASE_URL or GOOGLE_REDIRECT_URI is required");
+}
+
+export function pixelUrlFor(trackingId) {
+  return `${publicBaseUrl()}/o/${encodeURIComponent(trackingId)}.gif`;
 }
 
 export async function sendDueScheduledEmails({ fetchImpl = fetch, limit = 25 } = {}) {
@@ -41,19 +44,11 @@ export async function sendDueScheduledEmails({ fetchImpl = fetch, limit = 25 } =
   const results = [];
   for (const email of emails) {
     try {
-      const pixelUrl = `${publicBaseUrl()}/o/${encodeURIComponent(email.email_id)}.gif`;
-      const sent = await sendGmailMessageWithAccessToken(
-        {
-          accessToken,
-          message: {
-            to: email.recipients,
-            cc: email.cc,
-            bcc: email.bcc,
-            subject: email.subject,
-            text: email.body_text,
-            html: appendTrackingPixel(email.body_html, pixelUrl),
-          },
-        },
+      if (!email.gmail_draft_id) throw new Error("scheduled email has no Gmail draft");
+      // The draft (with its tracking pixel) was created when the user scheduled it; sending it
+      // moves it out of Drafts into Sent in one call, so there is nothing to re-compose here.
+      const sent = await sendGmailDraftWithAccessToken(
+        { accessToken, draftId: email.gmail_draft_id },
         fetchImpl
       );
       const updated = await store.markScheduledEmailSent(email.id, leaseToken, sent);
@@ -64,13 +59,16 @@ export async function sendDueScheduledEmails({ fetchImpl = fetch, limit = 25 } =
         sentAt: updated.sent_at,
         scheduled: false,
       });
+      console.log(`[MailTrack] draft sent draftId=${email.gmail_draft_id} messageId=${sent.messageId}`);
       results.push({ id: email.id, status: "sent" });
     } catch (error) {
+      console.error(`[MailTrack] draft send FAILED id=${email.id} draftId=${email.gmail_draft_id}: ${error.message}`);
       await store.markScheduledEmailFailed(
         email.id,
         leaseToken,
         error.message,
-        error.retryable !== false
+        // A deleted/missing draft can never succeed on retry.
+        error.retryable !== false && error.missingDraft !== true
       );
       results.push({ id: email.id, status: "failed" });
     }

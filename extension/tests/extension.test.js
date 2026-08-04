@@ -590,6 +590,63 @@ test("Sent rows receive passive status indicators", async () => {
   dom.window.close();
 });
 
+test("Draft rows show the scheduled-send time for a pending scheduled email", async () => {
+  const sendAt = "2026-08-04T15:00:00.000Z";
+  const scheduled = [
+    {
+      id: "scheduled-1",
+      status: "pending",
+      subject: "Later",
+      sendAt,
+      gmailThreadId: "19fc000000000123",
+    },
+  ];
+  const { dom, window } = await createWindow({
+    url: "https://mail.google.com/mail/u/0/#drafts",
+    html: `<!doctype html><body>
+      <table><tbody id="drafts-list">
+        <tr class="zA" data-legacy-thread-id="19fc000000000123">
+          <td class="WA">important</td>
+          <td class="yX"><span class="yW">recipient</span></td>
+        </tr>
+        <tr class="zA" data-legacy-thread-id="19fc000000000999">
+          <td class="WA">important</td>
+          <td class="yX"><span class="yW">recipient</span></td>
+        </tr>
+      </tbody></table>
+    </body>`,
+    async fetchHandler(url) {
+      if (String(url).endsWith("/api/scheduled-emails")) {
+        return { ok: true, json: async () => ({ emails: scheduled }) };
+      }
+      if (String(url).endsWith("/api/emails")) {
+        return { ok: true, json: async () => ({ emails: [] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  await tick(window);
+
+  const expectedLabel = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "numeric",
+  }).format(new Date(sendAt));
+
+  const badges = window.document.querySelectorAll(".mt-status-badge");
+  assert.equal(badges.length, 1);
+  const badge = badges[0];
+  assert.equal(badge.closest("tr").getAttribute("data-legacy-thread-id"), "19fc000000000123");
+  assert.equal(badge.classList.contains("mt-scheduled"), true);
+  assert.equal(badge.querySelector('.mt-status-icon')?.dataset.mtIcon, "tracked");
+  assert.equal(badge.querySelector(".mt-status-count")?.textContent, expectedLabel);
+  assert.equal(badge.dataset.mtStatusLabel, `Scheduled for ${expectedLabel}`);
+  assert.equal(badge.parentElement, badge.closest("tr").querySelector("td.WA"));
+
+  dom.window.close();
+});
+
 test("Scheduled rows identify messages whose tracking pixel is registered", async () => {
   const tracks = [
     {

@@ -12,10 +12,11 @@ Gmail displays a closed or open envelope in the Sent row and beside the timestam
 Opened messages show a compact `2x` count only after more than one recipient open.
 
 New-message composers also display a Send later row beneath the normal send controls.
-The time field accepts natural-language values such as `tomorrow 11am` or `tue 11am`, resolves them in the browser's local time zone, and only enables Send later for a future exact hour.
-MailTrack stores the message in the backend and the hourly cron sends every due message through the authenticated Gmail API with its tracking pixel already embedded.
+The time field accepts natural-language values such as `tomorrow 11am`, `tom 11am`, or `tue 11am`, resolves them in the browser's local time zone, and only enables Send later for a future exact hour.
+Scheduling creates a real Gmail draft (with its tracking pixel already embedded) that appears in the user's Drafts folder; the Drafts list badges that row with the tracking eye and the scheduled time.
+The hourly cron sends each due draft with Gmail's `drafts.send`, moving it from Drafts to Sent in one call, and cancelling a scheduled message also deletes its draft.
 The extension popup connects Gmail through OAuth and lists pending scheduled messages with a Cancel action.
-Gmail's native Schedule send is not used by this flow.
+Gmail's native Schedule send is not used by this flow; sending drafts requires the `gmail.compose` OAuth scope, so existing users must reconnect Gmail once after upgrading.
 
 The project intentionally does not include link tracking, timelines, analytics dashboards, recipient metadata, or recurring Gmail polling.
 

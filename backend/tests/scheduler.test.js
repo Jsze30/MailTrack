@@ -58,6 +58,7 @@ test("the hourly cron sends every due message once", async () => {
         bodyText: `Scheduled body ${sequence}`,
         bodyHtml: `<div>Scheduled body ${sequence}</div>`,
         sendAt: dueAt,
+        draftId: `draft-${sequence}`,
       });
     }
 
@@ -66,7 +67,7 @@ test("the hourly cron sends every due message once", async () => {
       if (String(url) === "https://oauth2.googleapis.com/token") {
         return Response.json({ access_token: "access-token" });
       }
-      if (String(url).endsWith("/gmail/v1/users/me/messages/send")) {
+      if (String(url).endsWith("/gmail/v1/users/me/drafts/send")) {
         sentRequests.push(JSON.parse(options.body));
         const sequence = sentRequests.length;
         return Response.json({
@@ -97,15 +98,11 @@ test("the hourly cron sends every due message once", async () => {
       ],
     });
     assert.equal(sentRequests.length, 2);
-
-    for (const [index, request] of sentRequests.entries()) {
-      const html = decodeHtmlPart(request.raw);
-      assert.match(html, new RegExp(`Scheduled body ${index + 1}`));
-      assert.match(
-        html,
-        new RegExp(`https://backend\\.example/o/scheduled_track_${index + 1}\\.gif`)
-      );
-    }
+    // The cron sends each stored draft by id - no message is re-composed at send time.
+    assert.deepEqual(
+      sentRequests.map((request) => request.id),
+      ["draft-1", "draft-2"]
+    );
 
     const secondRun = await nativeFetch(`${baseUrl}/api/cron/send-scheduled`, {
       method: "POST",
@@ -167,9 +164,30 @@ test("the scheduling API accepts a future whole hour and can cancel it", async (
     "x-track-secret": process.env.TRACK_SECRET,
   };
   const nextHour = new Date(Math.ceil((Date.now() + 2 * 60 * 1000) / 3_600_000) * 3_600_000);
+  const nativeFetch = globalThis.fetch;
+  let createdRaw = null;
+  const draftDeletes = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target === "https://oauth2.googleapis.com/token") {
+      return Response.json({ access_token: "access-token" });
+    }
+    if (target.endsWith("/gmail/v1/users/me/drafts") && options.method === "POST") {
+      createdRaw = JSON.parse(options.body).message.raw;
+      return Response.json({
+        id: "draft-api-1",
+        message: { id: "msg-api-1", threadId: "thread-api-1" },
+      });
+    }
+    if (target.includes("/gmail/v1/users/me/drafts/") && options.method === "DELETE") {
+      draftDeletes.push(target);
+      return new Response(null, { status: 204 });
+    }
+    return nativeFetch(url, options);
+  };
 
   try {
-    const scheduled = await fetch(`${baseUrl}/api/scheduled-emails`, {
+    const scheduled = await nativeFetch(`${baseUrl}/api/scheduled-emails`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -188,8 +206,14 @@ test("the scheduling API accepts a future whole hour and can cancel it", async (
     const scheduledPayload = await scheduled.json();
     assert.equal(scheduledPayload.email.status, "pending");
     assert.equal(scheduledPayload.email.sendAt, nextHour.toISOString());
+    // Scheduling creates a real Gmail draft (with the tracking pixel) and records its id.
+    assert.equal(scheduledPayload.email.gmailDraftId, "draft-api-1");
+    assert.equal(scheduledPayload.email.gmailThreadId, "thread-api-1");
+    const draftHtml = decodeHtmlPart(createdRaw);
+    assert.match(draftHtml, /API scheduled body/);
+    assert.match(draftHtml, /https:\/\/backend\.example\/o\/scheduled_api_track\.gif/);
 
-    const listing = await fetch(`${baseUrl}/api/scheduled-emails`, { headers });
+    const listing = await nativeFetch(`${baseUrl}/api/scheduled-emails`, { headers });
     assert.equal(listing.status, 200);
     const listedPayload = await listing.json();
     assert.equal(
@@ -197,15 +221,19 @@ test("the scheduling API accepts a future whole hour and can cancel it", async (
       true
     );
 
-    const cancelled = await fetch(
+    const cancelled = await nativeFetch(
       `${baseUrl}/api/scheduled-emails/${scheduledPayload.email.id}`,
       { method: "DELETE", headers }
     );
     assert.equal(cancelled.status, 200);
     assert.equal((await cancelled.json()).email.status, "cancelled");
+    // Cancelling also removes the draft from the user's Drafts folder.
+    assert.deepEqual(draftDeletes, [
+      "https://gmail.googleapis.com/gmail/v1/users/me/drafts/draft-api-1",
+    ]);
 
     const invalidMinutes = new Date(nextHour.getTime() + 30 * 60 * 1000);
-    const invalid = await fetch(`${baseUrl}/api/scheduled-emails`, {
+    const invalid = await nativeFetch(`${baseUrl}/api/scheduled-emails`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -222,6 +250,7 @@ test("the scheduling API accepts a future whole hour and can cancel it", async (
     });
     assert.equal(invalid.status, 400);
   } finally {
+    globalThis.fetch = nativeFetch;
     await new Promise((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     );

@@ -53,6 +53,7 @@
   let initialRouteHandled = false;
   let mappedThreadIds = new Set();
   let mirroredTracksByThread = new Map();
+  let scheduledByThread = new Map();
   let refreshPromise = null;
 
   function isSentRoute() {
@@ -63,8 +64,27 @@
     return /^#scheduled(?:\/|$)/i.test(location.hash);
   }
 
+  function isDraftsRoute() {
+    return /^#drafts(?:\/|$)/i.test(location.hash);
+  }
+
   function isTrackedListRoute() {
     return isSentRoute() || isScheduledRoute();
+  }
+
+  function isBadgedListRoute() {
+    return isTrackedListRoute() || isDraftsRoute();
+  }
+
+  function scheduledTimeLabel(sendAt) {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        hour: "numeric",
+      }).format(new Date(sendAt));
+    } catch {
+      return "";
+    }
   }
 
   function sentThreadIdFromRoute() {
@@ -190,6 +210,19 @@
     }
   }
 
+  function renderScheduledRowContent(badge, sendAt) {
+    const icon = document.createElementNS(SVG_NAMESPACE, "svg");
+    icon.setAttribute("class", "mt-status-icon");
+    icon.setAttribute("viewBox", "0 0 256 256");
+    icon.setAttribute("aria-hidden", "true");
+    icon.dataset.mtIcon = "tracked";
+    icon.innerHTML = TRACKED_EYE;
+    const time = document.createElement("span");
+    time.className = "mt-status-count";
+    time.textContent = scheduledTimeLabel(sendAt);
+    badge.replaceChildren(icon, time);
+  }
+
   function removeRowSpacer(row) {
     row.querySelector(":scope .mt-status-spacer")?.remove();
   }
@@ -219,8 +252,53 @@
     if (spacer.style.width !== nextWidth) spacer.style.width = nextWidth;
   }
 
+  function renderDraftRow(row, threadId) {
+    const sendAt = threadId ? scheduledByThread.get(threadId) : null;
+    const existing = row.querySelector(":scope .mt-status-badge");
+    if (!sendAt) {
+      existing?.remove();
+      removeRowSpacer(row);
+      row.querySelector("td.mt-status-cell")?.classList.remove("mt-status-cell");
+      return;
+    }
+
+    const importanceCell = row.querySelector("td.WA");
+    const recipientCell = row.querySelector("td.yX");
+    const cell = importanceCell || recipientCell;
+    if (!cell) return;
+    const signature = `scheduled|${sendAt}`;
+    const mountedCorrectly =
+      existing?.parentElement === cell &&
+      (!importanceCell ||
+        (importanceCell.classList.contains("mt-status-cell") &&
+          existing.classList.contains("mt-after-importance")));
+    if (existing?.dataset.mtSignature === signature && mountedCorrectly) {
+      syncRowSpacer(row, existing, importanceCell, recipientCell);
+      return;
+    }
+    const badge = existing || document.createElement("span");
+    badge.className = "mt-status-badge mt-scheduled";
+    if (importanceCell) {
+      importanceCell.classList.add("mt-status-cell");
+      badge.classList.add("mt-after-importance");
+    }
+    badge.dataset.mtSignature = signature;
+    badge.setAttribute("aria-hidden", "true");
+    badge.dataset.mtStatusLabel = `Scheduled for ${scheduledTimeLabel(sendAt)}`;
+    renderScheduledRowContent(badge, sendAt);
+    if (badge.parentElement !== cell) {
+      if (importanceCell) cell.appendChild(badge);
+      else cell.insertBefore(badge, cell.firstChild);
+    }
+    syncRowSpacer(row, badge, importanceCell, recipientCell);
+  }
+
   function renderRow(row) {
     const threadId = threadIdFrom(row);
+    if (isDraftsRoute()) {
+      renderDraftRow(row, threadId);
+      return;
+    }
     const track = mirroredTracksByThread.get(threadId) || byThread.get(threadId);
     const existing = row.querySelector(":scope .mt-status-badge");
     if (!track) {
@@ -267,7 +345,7 @@
   }
 
   function observeTrackedRows() {
-    if (!isTrackedListRoute()) return false;
+    if (!isBadgedListRoute()) return false;
     const rows = [...document.querySelectorAll(ROW_SELECTOR)];
     rows.forEach(renderRow);
     const root = rows[0]?.closest("tbody") || rows[0]?.parentElement;
@@ -563,8 +641,25 @@
   }
 
   function renderVisibleState() {
-    if (isTrackedListRoute()) observeTrackedRows();
+    if (isBadgedListRoute()) observeTrackedRows();
     renderMessageIndicators();
+  }
+
+  async function refreshScheduled() {
+    if (typeof window.MT.api.listScheduledEmails !== "function") return;
+    try {
+      const emails = await window.MT.api.listScheduledEmails();
+      const next = new Map();
+      for (const email of emails) {
+        if (email.status !== "pending" || !email.gmailThreadId) continue;
+        const threadId = normalizeThreadId(email.gmailThreadId);
+        if (threadId) next.set(threadId, email.sendAt);
+      }
+      scheduledByThread = next;
+      if (isDraftsRoute()) observeTrackedRows();
+    } catch {
+      // Leave the last known schedule in place if the fetch fails.
+    }
   }
 
   function stopRouteWork() {
@@ -579,6 +674,7 @@
     statusRefreshTimers.forEach(clearTimeout);
     statusRefreshTimers = [];
     refreshTracks();
+    if (isDraftsRoute()) refreshScheduled();
     for (const delay of STATUS_REFRESH_DELAYS) {
       statusRefreshTimers.push(setTimeout(() => refreshTracks(), delay));
     }
@@ -629,14 +725,15 @@
       selfViewStates = new Map();
       selfViewRouteKey = nextSelfViewRouteKey;
     }
-    if (!isTrackedListRoute()) {
+    if (!isBadgedListRoute()) {
       document.querySelectorAll(".mt-status-badge").forEach((badge) => badge.remove());
     }
     refreshTracks();
+    if (isDraftsRoute()) refreshScheduled();
     for (const delay of RETRY_DELAYS) {
       const timer = setTimeout(() => {
         if (generation !== routeGeneration) return;
-        if (isTrackedListRoute()) observeTrackedRows();
+        if (isBadgedListRoute()) observeTrackedRows();
         renderMessageIndicators();
       }, delay);
       retryTimers.push(timer);

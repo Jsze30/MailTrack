@@ -8,9 +8,13 @@ import {
   authorizationUrl,
   exchangeAuthorizationCode,
   revokeGoogleToken,
+  refreshAccessToken,
+  createGmailDraftWithAccessToken,
+  deleteGmailDraftWithAccessToken,
 } from "./google.js";
+import { appendTrackingPixel } from "./mime.js";
 import { decryptToken, encryptToken } from "./token-crypto.js";
-import { sendDueScheduledEmails } from "./scheduler.js";
+import { sendDueScheduledEmails, pixelUrlFor } from "./scheduler.js";
 
 const pixel = Buffer.from(
   "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
@@ -81,7 +85,9 @@ function scheduledStatus(email) {
     sendAt: email.send_at,
     status: email.status,
     attemptCount: email.attempt_count,
+    gmailDraftId: email.gmail_draft_id,
     gmailMessageId: email.gmail_message_id,
+    gmailThreadId: email.gmail_thread_id,
     lastError: email.last_error,
   };
 }
@@ -330,12 +336,41 @@ app.post("/api/scheduled-emails", requireSecret, async (request, response) => {
     response.status(400).json({ error: "sendAt must be a future whole-hour time" });
     return;
   }
-  if (!(await store.getGoogleConnection())) {
+  const connection = await store.getGoogleConnection();
+  if (!connection) {
     response.status(409).json({ error: "Gmail is not connected" });
     return;
   }
 
   await store.createTrack(trackingId);
+
+  // Create the message as a real Gmail draft now (with its tracking pixel embedded) so the user
+  // sees it in their Drafts folder; the cron sends this exact draft when it is due.
+  let draft;
+  try {
+    const accessToken = await refreshAccessToken(
+      decryptToken(connection.encrypted_refresh_token)
+    );
+    draft = await createGmailDraftWithAccessToken({
+      accessToken,
+      message: {
+        to: recipients,
+        cc,
+        bcc,
+        subject: subject.trim(),
+        text: bodyText,
+        html: appendTrackingPixel(bodyHtml, pixelUrlFor(trackingId)),
+      },
+    });
+    console.log(
+      `[MailTrack] draft created draftId=${draft.draftId} threadId=${draft.threadId} sendAt=${new Date(parsedSendAt).toISOString()} recipients=${recipients.length}`
+    );
+  } catch (error) {
+    console.error(`[MailTrack] draft create FAILED: ${error.message}`);
+    response.status(502).json({ error: error.message || "Could not create the Gmail draft" });
+    return;
+  }
+
   const scheduled = await store.createScheduledEmail({
     id: crypto.randomUUID(),
     emailId: trackingId,
@@ -346,6 +381,9 @@ app.post("/api/scheduled-emails", requireSecret, async (request, response) => {
     bodyText,
     bodyHtml,
     sendAt: new Date(parsedSendAt).toISOString(),
+    draftId: draft.draftId,
+    gmailMessageId: draft.messageId,
+    gmailThreadId: draft.threadId,
   });
   response.status(201).json({ ok: true, email: scheduledStatus(scheduled) });
 });
@@ -360,6 +398,22 @@ app.delete("/api/scheduled-emails/:id", requireSecret, async (request, response)
   if (!email) {
     response.status(409).json({ error: "only pending email can be cancelled" });
     return;
+  }
+  // Remove the draft from the user's Drafts folder too; a failure here is best-effort and must
+  // not fail the cancel, since the schedule is already marked cancelled and will never send.
+  if (email.gmail_draft_id) {
+    const connection = await store.getGoogleConnection();
+    if (connection) {
+      try {
+        const accessToken = await refreshAccessToken(
+          decryptToken(connection.encrypted_refresh_token)
+        );
+        await deleteGmailDraftWithAccessToken({ accessToken, draftId: email.gmail_draft_id });
+        console.log(`[MailTrack] cancelled + draft deleted draftId=${email.gmail_draft_id}`);
+      } catch {
+        // Leave the draft in place if deletion fails; the schedule is still cancelled.
+      }
+    }
   }
   response.json({ ok: true, email: scheduledStatus(email) });
 });

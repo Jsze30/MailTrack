@@ -103,6 +103,7 @@ export async function init() {
       attempt_count       INTEGER NOT NULL DEFAULT 0,
       lease_token         TEXT,
       lease_until         TIMESTAMPTZ,
+      gmail_draft_id      TEXT,
       gmail_message_id    TEXT,
       gmail_thread_id     TEXT,
       last_error          TEXT,
@@ -110,6 +111,7 @@ export async function init() {
       updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
       sent_at             TIMESTAMPTZ
     );
+    ALTER TABLE scheduled_emails ADD COLUMN IF NOT EXISTS gmail_draft_id TEXT;
     CREATE INDEX IF NOT EXISTS scheduled_emails_due_idx
       ON scheduled_emails(status, send_at);
   `);
@@ -347,8 +349,8 @@ export async function createScheduledEmail(email) {
     const { rows } = await pg.query(
       `INSERT INTO scheduled_emails (
          id, connection_id, email_id, recipients, cc, bcc, subject,
-         body_text, body_html, send_at
-       ) VALUES ($1, 'primary', $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7, $8, $9)
+         body_text, body_html, send_at, gmail_draft_id, gmail_message_id, gmail_thread_id
+       ) VALUES ($1, 'primary', $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         email.id,
@@ -360,6 +362,9 @@ export async function createScheduledEmail(email) {
         email.bodyText,
         email.bodyHtml,
         email.sendAt,
+        email.draftId || null,
+        email.gmailMessageId || null,
+        email.gmailThreadId || null,
       ]
     );
     return rows[0];
@@ -382,8 +387,9 @@ export async function createScheduledEmail(email) {
     attempt_count: 0,
     lease_token: null,
     lease_until: null,
-    gmail_message_id: null,
-    gmail_thread_id: null,
+    gmail_draft_id: email.draftId || null,
+    gmail_message_id: email.gmailMessageId || null,
+    gmail_thread_id: email.gmailThreadId || null,
     last_error: null,
     created_at: now,
     updated_at: now,

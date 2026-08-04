@@ -4,10 +4,14 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+const GMAIL_DRAFTS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts";
+const GMAIL_DRAFTS_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send";
 const SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
-  "https://www.googleapis.com/auth/gmail.send",
+  // gmail.compose lets us create the draft the user sees in their Drafts folder and send it
+  // when the schedule is due; it also covers plain sending.
+  "https://www.googleapis.com/auth/gmail.compose",
 ];
 
 export function googleConfig() {
@@ -116,6 +120,69 @@ export async function sendGmailMessageWithAccessToken(
     throw error;
   }
   return { messageId: payload.id, threadId: payload.threadId || payload.id };
+}
+
+export async function createGmailDraftWithAccessToken(
+  { accessToken, message },
+  fetchImpl = fetch
+) {
+  const raw = buildRawMessage(message);
+  const response = await fetchImpl(GMAIL_DRAFTS_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ message: { raw } }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.id) {
+    const error = new Error(payload.error?.message || `Gmail returned ${response.status}`);
+    error.retryable = response.status === 429 || response.status >= 500;
+    throw error;
+  }
+  return {
+    draftId: payload.id,
+    messageId: payload.message?.id || null,
+    threadId: payload.message?.threadId || null,
+  };
+}
+
+export async function sendGmailDraftWithAccessToken(
+  { accessToken, draftId },
+  fetchImpl = fetch
+) {
+  const response = await fetchImpl(GMAIL_DRAFTS_SEND_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ id: draftId }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.id) {
+    const error = new Error(payload.error?.message || `Gmail returned ${response.status}`);
+    // A missing draft (deleted or already sent) can never succeed on retry.
+    error.retryable = response.status === 429 || response.status >= 500;
+    error.missingDraft = response.status === 404;
+    throw error;
+  }
+  return { messageId: payload.id, threadId: payload.threadId || payload.id };
+}
+
+export async function deleteGmailDraftWithAccessToken(
+  { accessToken, draftId },
+  fetchImpl = fetch
+) {
+  const response = await fetchImpl(`${GMAIL_DRAFTS_URL}/${encodeURIComponent(draftId)}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  // 404 means it is already gone, which is the state we want.
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Gmail draft deletion returned ${response.status}`);
+  }
 }
 
 export async function revokeGoogleToken(refreshToken, fetchImpl = fetch) {
