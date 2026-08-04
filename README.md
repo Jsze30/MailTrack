@@ -57,7 +57,7 @@ Version 2 keeps the existing `/api/emails` route names so the extension can be r
 3. Select Load unpacked and choose the `extension/` directory.
 4. Open the MailTrack popup and save the backend URL and shared secret.
 5. Select Connect Gmail and finish the Google authorization in the new tab.
-6. Confirm the popup displays extension version `2.0.37`.
+6. Confirm the popup displays extension version `2.0.38`.
 7. Reload Gmail in a new tab.
 
 ## Test

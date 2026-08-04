@@ -144,6 +144,31 @@
     return originalSend.apply(this, arguments);
   };
 
+  const originalFetch = window.fetch;
+  window.fetch = async function (input, options = {}) {
+    const isRequest = typeof Request !== "undefined" && input instanceof Request;
+    const url = isRequest ? input.url : String(input);
+    if (!SEND_URL.test(url)) return originalFetch.apply(this, arguments);
+
+    const preparedPixel = pendingPixel;
+    const scheduled = preparedPixel?.scheduled;
+    const outgoingBody = injectPixel(options.body, preparedPixel);
+    const outgoingTrackingIds = trackingIdsFrom(outgoingBody);
+    const trackingIds =
+      preparedPixel?.trackingId && outgoingTrackingIds.includes(preparedPixel.trackingId)
+        ? [preparedPixel.trackingId]
+        : [];
+    const response = await originalFetch.call(this, input, { ...options, body: outgoingBody });
+    if (response.ok && trackingIds.length) {
+      response.clone().text().then((body) => {
+        if (publish(trackingIds, body, scheduled)) {
+          if (pendingPixel?.trackingId === preparedPixel.trackingId) pendingPixel = null;
+        }
+      }).catch(() => {});
+    }
+    return response;
+  };
+
   window.addEventListener("mailtrack:prepare-send", (event) => {
     try {
       pendingPixel = JSON.parse(event.detail);

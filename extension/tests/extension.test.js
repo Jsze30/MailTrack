@@ -55,7 +55,7 @@ async function createWindow({
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: "2.0.37" }),
+      getManifest: () => ({ version: "2.0.38" }),
       sendMessage(message, callback) {
         callback(runtimeHandler ? runtimeHandler(message) : { ok: false, error: "not connected" });
       },
@@ -1226,10 +1226,19 @@ test("a Sent thread row follows the newest reply without changing the original s
   dom.window.close();
 });
 
-test("Gmail page observer finds the tracking ID and exact sent IDs", async () => {
+test("Gmail page observer finds exact sent IDs for XHR and fetch sends", async () => {
+  let fetchRequest = null;
+  let gmailResponse = "";
   const { dom, window } = await createWindow({
     html: "<!doctype html><body></body>",
-    async fetchHandler() {
+    async fetchHandler(url, options = {}) {
+      if (String(url).includes("/sync/")) {
+        fetchRequest = { url: String(url), options };
+        return {
+          ok: true,
+          clone: () => ({ text: async () => gmailResponse }),
+        };
+      }
       return { ok: true, json: async () => ({ ok: true }) };
     },
   });
@@ -1256,7 +1265,7 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   thread[4] = [message];
   thread[19] = "19fc000000000123";
 
-  let gmailResponse = JSON.stringify([0, [thread]]);
+  gmailResponse = JSON.stringify([0, [thread]]);
   class FakeXMLHttpRequest extends window.EventTarget {
     open() {}
     send(body) {
@@ -1309,6 +1318,26 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   window.dispatchEvent(
     new window.CustomEvent("mailtrack:prepare-send", {
       detail: JSON.stringify({
+        trackingId: "track_FETCH-456",
+        pixelUrl: "https://backend.example.test/o/track_FETCH-456.gif",
+      }),
+    })
+  );
+  await window.fetch("/sync/u/0/i/s?rt=r", {
+    method: "POST",
+    body: JSON.stringify(outgoingRequest),
+  });
+  await tick(window);
+  assert.match(fetchRequest.options.body, /\/o\/track_FETCH-456\.gif/);
+  assert.deepEqual(sentDetails[1], {
+    trackingId: "track_FETCH-456",
+    threadId: "19fc000000000123",
+    messageId: "19fc100000000123",
+  });
+
+  window.dispatchEvent(
+    new window.CustomEvent("mailtrack:prepare-send", {
+      detail: JSON.stringify({
         trackingId: "track_ABC-123",
         pixelUrl: "https://backend.example.test/o/track_ABC-123.gif",
         scheduled: true,
@@ -1319,15 +1348,15 @@ test("Gmail page observer finds the tracking ID and exact sent IDs", async () =>
   scheduledXhr.open("POST", "/sync/u/0/i/s?rt=r");
   gmailResponse = JSON.stringify([0, []]);
   scheduledXhr.send(JSON.stringify(outgoingRequest));
-  assert.equal(sentDetails.length, 1);
+  assert.equal(sentDetails.length, 2);
 
   const finalScheduledXhr = new window.XMLHttpRequest();
   finalScheduledXhr.open("POST", "/sync/u/0/i/s?rt=r");
   gmailResponse = JSON.stringify([0, [thread]]);
   finalScheduledXhr.send(JSON.stringify(outgoingRequest));
-  assert.equal(sentDetails.length, 2);
-  assert.equal(sentDetails[1].trackingId, "track_ABC-123");
-  assert.equal(sentDetails[1].scheduled, true);
+  assert.equal(sentDetails.length, 3);
+  assert.equal(sentDetails[2].trackingId, "track_ABC-123");
+  assert.equal(sentDetails[2].scheduled, true);
   dom.window.close();
 });
 
