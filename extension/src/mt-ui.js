@@ -576,15 +576,25 @@
     const activeTimestamps = new Set();
 
     for (const message of messages) {
+      const hasPixel = trackingPixelFrom(message) != null;
       const pixelId = pixelIdFrom(message);
       const messageId = messageIdFrom(message);
       const threadId = threadIdFrom(message) || pageThreadId;
       const threadTracks = tracksByThread.get(threadId) || [];
       const uniqueThreadTrack = threadTracks.length === 1 ? threadTracks[0] : null;
-      const track = byId.get(pixelId) || byMessage.get(messageId) || uniqueThreadTrack;
+      // Only fall back to the thread's single track for a message that actually carries the
+      // tracking pixel. Otherwise an inbound message in a one-tracked-message thread (e.g. the
+      // original email you replied to) would wrongly inherit your reply's tracking badge.
+      const track = byId.get(pixelId) || byMessage.get(messageId) || (hasPixel ? uniqueThreadTrack : null);
       if (!track) continue;
       if (threadId) mirroredTracksByThread.set(threadId, track);
-      if (isTrackedListRoute() && selfViewStates.get(track.id) !== "settled") {
+      // Record a sender self-view (so the backend excludes it) whenever the sender is looking at
+      // their own tracked message: on the Sent/Scheduled lists, or - crucially - at their own
+      // reply's pixel inside an inbox thread, which otherwise counts the sender's own open.
+      if (
+        (isTrackedListRoute() || hasPixel) &&
+        selfViewStates.get(track.id) !== "settled"
+      ) {
         settleSelfView(track, message);
       }
       const timestamp = message.querySelector(".g3");

@@ -838,9 +838,14 @@ test("each sent message gets its own history while received messages and Inbox r
     [replyOpen]
   );
 
+  // Viewing your own reply's pixel inside the inbox thread is a sender self-view, so it is
+  // reported (and excluded) - but only for the reply, never the received email or the earlier
+  // sent message whose pixel isn't loaded here.
+  const selfViewRequests = requests.filter((request) => request.url.endsWith("/selfview"));
+  assert.equal(selfViewRequests.length >= 1, true);
   assert.equal(
-    requests.filter((request) => request.url.endsWith("/selfview")).length,
-    0
+    selfViewRequests.every((request) => request.url.includes("track-reply")),
+    true
   );
   assert.equal(
     requests.filter((request) => request.options.method === "PATCH").length,
@@ -870,6 +875,55 @@ test("each sent message gets its own history while received messages and Inbox r
   });
   star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   assert.equal(starClicks, 1);
+
+  dom.window.close();
+});
+
+test("a received email in a single-tracked-reply thread is not badged or self-viewed", async () => {
+  const track = {
+    id: "track-only-reply",
+    gmailThreadId: "19fc000000000abc",
+    gmailMessageId: null,
+    opened: false,
+    openCount: 0,
+    openHistory: [],
+  };
+  const requests = [];
+  const { dom, window } = await createWindow({
+    url: "https://mail.google.com/mail/u/0/#inbox/19fc000000000abc",
+    cache: [track],
+    html: `<!doctype html><body>
+      <div class="adn" id="received" data-legacy-thread-id="19fc000000000abc" data-legacy-message-id="19fc100000000777">
+        <div class="actions"><span class="g3">9:00 AM</span></div>
+      </div>
+      <div class="adn" id="reply" data-legacy-thread-id="19fc000000000abc" data-legacy-message-id="19fc100000000888">
+        <div class="actions"><span class="g3">9:05 AM</span></div>
+        <img data-mailtrack-pixel="track-only-reply" src="https://backend.example.test/o/track-only-reply.gif">
+      </div>
+    </body>`,
+    async fetchHandler(url) {
+      requests.push({ url: String(url) });
+      if (String(url).endsWith("/api/emails")) {
+        return { ok: true, json: async () => ({ emails: [track] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  await tick(window);
+  await tick(window);
+
+  // Only the reply (which carries the pixel) is badged; the received email must not inherit it.
+  assert.equal(window.document.querySelectorAll(".mt-thread-status").length, 1);
+  assert.equal(window.document.querySelector("#received .mt-thread-status"), null);
+  assert.ok(window.document.querySelector("#reply .mt-thread-status"));
+  // And self-view is reported only for the reply, never for the received email.
+  const selfViews = requests.filter((request) => request.url.endsWith("/selfview"));
+  assert.equal(
+    selfViews.every((request) => request.url.includes("track-only-reply")),
+    true
+  );
 
   dom.window.close();
 });
