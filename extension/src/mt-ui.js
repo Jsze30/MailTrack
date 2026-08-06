@@ -402,8 +402,7 @@
     ].find((candidate) => !candidate.closest(".gmail_quote, blockquote"));
   }
 
-  function pixelIdFrom(message) {
-    const image = trackingPixelFrom(message);
+  function pixelIdFromImage(image) {
     if (!image) return null;
     const marked = image.getAttribute("data-mailtrack-pixel");
     if (marked) return marked;
@@ -422,8 +421,20 @@
     return null;
   }
 
-  function waitForTrackingPixel(message) {
-    const image = trackingPixelFrom(message);
+  // Quoted pixels are deliberately excluded from badge placement, but Gmail can still load them
+  // while the sender views a thread. Include them here solely to suppress those sender loads.
+  function trackedPixelsForSelfView(message) {
+    const pixels = new Map();
+    for (const image of message.querySelectorAll(
+      'img.mailtrack-img, img[data-mailtrack-pixel], img[src*="/o/"], img[data-src*="/o/"]'
+    )) {
+      const id = pixelIdFromImage(image);
+      if (id && !pixels.has(id)) pixels.set(id, image);
+    }
+    return pixels;
+  }
+
+  function waitForTrackingPixel(image) {
     if (!image || image.complete) return Promise.resolve();
     return new Promise((resolve) => {
       let timer = null;
@@ -536,7 +547,7 @@
     return indicator;
   }
 
-  function settleSelfView(track, message) {
+  function settleSelfView(track, pixel) {
     if (selfViewStates.has(track.id)) return;
     const routeSelfViewStates = selfViewStates;
     routeSelfViewStates.set(track.id, "pending");
@@ -545,7 +556,7 @@
       try {
         await window.MT.api.selfView(track.id, { phase: "start", viewedAt });
         await Promise.all([
-          waitForTrackingPixel(message),
+          waitForTrackingPixel(pixel),
           new Promise((resolve) => setTimeout(resolve, SELF_VIEW_MIN_WINDOW_MS)),
         ]);
         await new Promise((resolve) => setTimeout(resolve, SELF_VIEW_SETTLE_MS));
@@ -576,8 +587,9 @@
     const activeTimestamps = new Set();
 
     for (const message of messages) {
-      const hasPixel = trackingPixelFrom(message) != null;
-      const pixelId = pixelIdFrom(message);
+      const directPixel = trackingPixelFrom(message);
+      const hasPixel = directPixel != null;
+      const pixelId = pixelIdFromImage(directPixel);
       const messageId = messageIdFrom(message);
       const threadId = threadIdFrom(message) || pageThreadId;
       const threadTracks = tracksByThread.get(threadId) || [];
@@ -586,17 +598,26 @@
       // tracking pixel. Otherwise an inbound message in a one-tracked-message thread (e.g. the
       // original email you replied to) would wrongly inherit your reply's tracking badge.
       const track = byId.get(pixelId) || byMessage.get(messageId) || (hasPixel ? uniqueThreadTrack : null);
+      const selfViewTracks = new Map();
+      for (const [id, pixel] of trackedPixelsForSelfView(message)) {
+        const quotedTrack = byId.get(id);
+        if (quotedTrack) selfViewTracks.set(quotedTrack.id, { track: quotedTrack, pixel });
+      }
+      if (track && !selfViewTracks.has(track.id)) {
+        selfViewTracks.set(track.id, { track, pixel: directPixel });
+      }
+
+      // A quoted tracked message may not be suitable for a badge, but Gmail can still fetch its
+      // image while this sender is viewing the thread. Suppress that self-open independently.
+      if (isTrackedListRoute() || hasPixel || selfViewTracks.size > 0) {
+        for (const { track: selfViewTrack, pixel } of selfViewTracks.values()) {
+          if (selfViewStates.get(selfViewTrack.id) !== "settled") {
+            settleSelfView(selfViewTrack, pixel);
+          }
+        }
+      }
       if (!track) continue;
       if (threadId) mirroredTracksByThread.set(threadId, track);
-      // Record a sender self-view (so the backend excludes it) whenever the sender is looking at
-      // their own tracked message: on the Sent/Scheduled lists, or - crucially - at their own
-      // reply's pixel inside an inbox thread, which otherwise counts the sender's own open.
-      if (
-        (isTrackedListRoute() || hasPixel) &&
-        selfViewStates.get(track.id) !== "settled"
-      ) {
-        settleSelfView(track, message);
-      }
       const timestamp = message.querySelector(".g3");
       if (!timestamp || !message.contains(timestamp)) continue;
       activeTimestamps.add(timestamp);

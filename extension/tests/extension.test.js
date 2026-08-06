@@ -842,15 +842,19 @@ test("each sent message gets its own history while received messages and Inbox r
     [replyOpen]
   );
 
-  // Viewing your own reply's pixel inside the inbox thread is a sender self-view, so it is
-  // reported (and excluded) - but only for the reply, never the received email or the earlier
-  // sent message whose pixel isn't loaded here.
+  // Quoted history can cause Gmail to load the original sent pixel too. Both tracked IDs are
+  // sender self-views, while only actual sent messages receive badges.
   const selfViewRequests = requests.filter((request) => request.url.endsWith("/selfview"));
   assert.equal(selfViewRequests.length >= 1, true);
   assert.equal(
-    selfViewRequests.every((request) => request.url.includes("track-reply")),
+    selfViewRequests.every(
+      (request) =>
+        request.url.includes("track-original") || request.url.includes("track-reply")
+    ),
     true
   );
+  assert.equal(selfViewRequests.some((request) => request.url.includes("track-original")), true);
+  assert.equal(selfViewRequests.some((request) => request.url.includes("track-reply")), true);
   assert.equal(
     requests.filter((request) => request.options.method === "PATCH").length,
     1
@@ -927,6 +931,61 @@ test("a received email in a single-tracked-reply thread is not badged or self-vi
   assert.equal(
     selfViews.every((request) => request.url.includes("track-only-reply")),
     true
+  );
+
+  dom.window.close();
+});
+
+test("quoted pixels from an untracked phone reply are self-viewed once without adding a badge", async () => {
+  const track = {
+    id: "track-original-only",
+    gmailThreadId: "19fc000000000def",
+    gmailMessageId: "19fc100000000333",
+    opened: false,
+    openCount: 0,
+    openHistory: [],
+  };
+  const requests = [];
+  const { dom, window } = await createWindow({
+    url: "https://mail.google.com/mail/u/0/#inbox/19fc000000000def",
+    cache: [track],
+    html: `<!doctype html><body>
+      <div class="adn" id="received" data-legacy-thread-id="19fc000000000def">
+        <div class="actions"><span class="g3">9:00 AM</span></div>
+      </div>
+      <div class="adn" id="phone-reply" data-legacy-thread-id="19fc000000000def">
+        <div class="actions"><span class="g3">9:05 AM</span></div>
+        <blockquote class="gmail_quote">
+          <img src="https://backend.example.test/o/track-original-only.gif">
+          <img src="https://backend.example.test/o/track-original-only.gif">
+        </blockquote>
+      </div>
+    </body>`,
+    async fetchHandler(url, options = {}) {
+      requests.push({ url: String(url), options });
+      if (String(url).endsWith("/api/emails")) {
+        return { ok: true, json: async () => ({ emails: [track] }) };
+      }
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+
+  window.eval(await source("src/mt-ui.js"));
+  for (
+    let attempt = 0;
+    attempt < 10 && requests.filter((request) => request.url.endsWith("/selfview")).length < 2;
+    attempt += 1
+  ) {
+    await tick(window);
+  }
+
+  assert.equal(window.document.querySelectorAll(".mt-thread-status").length, 0);
+  const selfViews = requests.filter((request) => request.url.endsWith("/selfview"));
+  assert.equal(selfViews.length, 2);
+  assert.equal(selfViews.every((request) => request.url.includes("track-original-only")), true);
+  assert.deepEqual(
+    selfViews.map((request) => JSON.parse(request.options.body).phase),
+    ["start", "end"]
   );
 
   dom.window.close();

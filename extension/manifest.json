@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MailTrack",
-  "version": "2.0.39",
+  "version": "2.0.40",
   "description": "Track new emails and replies, then show opened status in Gmail.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwDjPBjKu2AKaGSqPPoa0Q0iwXqrXhBchh5ioVvqg+qdB5JOA9ybvEsjZiibv5N6p2qa5GUQcSEL4WDKmIPvFFxbtSB7RS3zOs0UW4RGDk0jcflYAtYO10bz73oDYzUqnyO/fRXZ9o2gpXXXh8BmY0MAgMwK964EXj5QRtO+D+PAggIbr1xvRHE8DjvAzosTP9on4UP7w/pEmPt0N9aD5rtNtBHUPXj64/RaLOWKC/3Bq8qHXaJ9ZF5Uuz+cZf6Ux/nAtWZrJj8taGyV3DINlIVkejGAJagLpkuDH8cr6R/QbCe1dwjBrl70pWlrscJ5Vo94T0Uihpxy95jigtCvOowIDAQAB",
   "permissions": ["storage"],
